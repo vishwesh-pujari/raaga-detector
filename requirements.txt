@@ -1,0 +1,9 @@
+# Colab / Kaggle: `pip install -q -e .` (reads pyproject.toml). This file is for plain-pip users.
+numpy
+scipy
+pandas
+scikit-learn
+pyyaml
+matplotlib
+requests
+pytest

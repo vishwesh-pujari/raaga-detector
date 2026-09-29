@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Project: local scratch, caches, checkpoints, audio
+workdir/
+*.npz
+*.ckpt
+*.pt
+*.wav
+*.mp3
+*.flac

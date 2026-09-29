@@ -1,0 +1,10 @@
+# Merge different spellings of the same raga. Format:
+#   canonical name:
+#     - alternative spelling
+# Names are compared after raaga.data.names.slug(), so case, accents, spaces and a leading
+# "Raga/Rag" don't matter, and asawari == asavari. Fill this in after the data audit
+# (notebooks/01_data_audit.ipynb prints the ragas that look like near-duplicates).
+bhoopali:
+  - bhupali
+  - bhopali
+  - bhoop
