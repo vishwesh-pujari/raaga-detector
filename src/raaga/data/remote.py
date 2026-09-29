@@ -73,6 +73,8 @@ def fetch_members(
     dest.mkdir(parents=True, exist_ok=True)
     marker = dest / ".complete"  # written when a previous run finished extracting
     if marker.exists():
+        if verbose:
+            print(f"{dest} already downloaded and extracted (found {marker}), reusing -- not re-downloading.", flush=True)
         return sorted(p for p in dest.rglob("*") if p.is_file() and include(p.relative_to(dest).as_posix()))
     zip_path = dest / "_download.zip"
     if verbose:
