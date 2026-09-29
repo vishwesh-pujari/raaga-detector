@@ -1,0 +1,3 @@
+# Same artist spelled differently in HMD folder names (used for the train/test artist-overlap diagnostic).
+kumar_gandharva:
+  - Kumar_Gandharv
