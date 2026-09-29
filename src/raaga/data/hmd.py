@@ -7,8 +7,12 @@ mirdata's ``compmusic_raga`` index only lists the Carnatic half, so we read the 
 """
 
 import json
+import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
+
+# Every feature filename ends in "_<mbid>": e.g. "Raga_Bhageshri_6cb0fc24-...-8552b70127ea.tonic".
+_MBID_SUFFIX = re.compile(r"_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 
 URL = (
     "https://zenodo.org/record/7278506/files/"
@@ -43,6 +47,23 @@ def _read_float(path: str) -> Optional[float]:
         return None
 
 
+def _index_by_mbid(base: Path) -> Dict[str, str]:
+    """Map mbid -> extension-less feature path, by scanning the extracted ``.tonic`` files.
+
+    ``path_mbid_ragaid.json``'s ``path`` field is not reliable for this: the zip's folder names
+    have ``:`` and ``&`` sanitised to ``_`` (Windows-illegal filename characters), but the JSON
+    keeps the original punctuation. E.g. json path ".../Raag_Marwa_&_Hameer/..." but the actual
+    folder on disk is ".../Raag_Marwa___Hameer/...". Matching by mbid suffix instead of
+    reconstructing the path sidesteps this (verified: 300/300 vs 236/300 recordings found).
+    """
+    out = {}
+    for f in (base / "features").rglob("*.tonic"):
+        m = _MBID_SUFFIX.search(f.stem)
+        if m:
+            out[m.group(1)] = str(f)[: -len(".tonic")]
+    return out
+
+
 def rows(raw_home: Path, tonic_kind: str = "tonic") -> List[dict]:
     """One dict per recording. ``tonic_kind``: 'tonic' or 'tonicFine' (manually fine-tuned)."""
     base = home(raw_home)
@@ -50,11 +71,13 @@ def rows(raw_home: Path, tonic_kind: str = "tonic") -> List[dict]:
         meta = json.load(f)
     with open(base / "_info_" / "ragaId_to_ragaName_mapping.json") as f:
         names = json.load(f)
+    by_mbid = _index_by_mbid(base)
     out = []
     for mbid, v in meta.items():
-        # RagaDataset/Hindustani/audio/<ragaid>/<artist>/<concert>/<recording>
+        # RagaDataset/Hindustani/audio/<ragaid>/<artist>/<concert>/<recording> -- only used for the
+        # artist/concert grouping labels below, not for locating files (see _index_by_mbid).
         parts = v["path"].split("/")
-        feature_stem = str(base / "features" / "/".join(parts[3:]))
+        stem = by_mbid.get(mbid)
         out.append(
             dict(
                 uid=f"hmd:{mbid}",
@@ -64,8 +87,8 @@ def rows(raw_home: Path, tonic_kind: str = "tonic") -> List[dict]:
                 artist=parts[4],
                 concert=parts[5],
                 mbid=mbid,
-                tonic_hz=_read_float(f"{feature_stem}.{tonic_kind}"),
-                pitch_path=f"{feature_stem}.pitch",
+                tonic_hz=_read_float(f"{stem}.{tonic_kind}") if stem else None,
+                pitch_path=f"{stem}.pitch" if stem else None,
                 vocal_class="unknown",  # see data/musicbrainz.py
             )
         )
