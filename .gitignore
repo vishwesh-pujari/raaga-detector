@@ -225,3 +225,6 @@ workdir/
 *.wav
 *.mp3
 *.flac
+# catalog.csv has machine-local file paths baked in -- never commit it. data/splits/*.csv (ids
+# and labels only) are the only data/ files meant to be committed.
+data/catalog.csv

@@ -1,6 +1,7 @@
 """hmd/saraga/catalog parsing, using tiny fixtures that mimic the real archive layouts."""
 
 import json
+import os
 
 import pandas as pd
 
@@ -14,10 +15,14 @@ def _make_hmd(raw):
     base = raw / "compmusic_raga" / "RagaDataset" / "Hindustani"
     (base / "_info_").mkdir(parents=True)
     rec = "Raga_Bhageshri_" + MBID
-    audio = f"RagaDataset/Hindustani/audio/{RAGA_ID}/Jagdish_Prasad/Shraddhanjali:_Jagdish_Prasad/{rec}"
+    # path_mbid_ragaid.json keeps the original ":", but the archive's real folder (like the actual
+    # dataset) sanitises it to "_" -- this mismatch is exactly the bug _index_by_mbid works around.
+    json_concert = "Shraddhanjali:_Jagdish_Prasad"
+    disk_concert = "Shraddhanjali__Jagdish_Prasad"
+    audio = f"RagaDataset/Hindustani/audio/{RAGA_ID}/Jagdish_Prasad/{json_concert}/{rec}"
     (base / "_info_" / "path_mbid_ragaid.json").write_text(json.dumps({MBID: dict(path=audio, mbid=MBID, ragaid=RAGA_ID)}))
     (base / "_info_" / "ragaId_to_ragaName_mapping.json").write_text(json.dumps({RAGA_ID: "Bāgēśrī"}))
-    feat = base / "features" / RAGA_ID / "Jagdish_Prasad" / "Shraddhanjali:_Jagdish_Prasad"
+    feat = base / "features" / RAGA_ID / "Jagdish_Prasad" / disk_concert
     feat.mkdir(parents=True)
     (feat / f"{rec}.tonic").write_text("146.832384\n")
     (feat / f"{rec}.pitch").write_text("0.0\t0.0\n0.0044444\t150.0\n")
@@ -44,8 +49,25 @@ def test_hmd_rows(tmp_path):
     _make_hmd(tmp_path)
     (row,) = hmd.rows(tmp_path)
     assert row["raga_raw"] == "Bāgēśrī" and row["artist"] == "Jagdish_Prasad"
-    assert row["concert"] == "Shraddhanjali:_Jagdish_Prasad" and row["tonic_hz"] == 146.832384
-    assert row["pitch_path"].endswith(".pitch")
+    # the (unsanitised) json path is still fine as a grouping label...
+    assert row["concert"] == "Shraddhanjali:_Jagdish_Prasad"
+    # ...but the file must be found on disk despite the sanitised folder name, not left as None
+    assert row["tonic_hz"] == 146.832384
+    assert row["pitch_path"] is not None and row["pitch_path"].endswith(".pitch")
+    assert os.path.exists(row["pitch_path"])
+
+
+def test_hmd_rows_missing_mbid_gives_none_not_a_crash(tmp_path):
+    _make_hmd(tmp_path)
+    base = tmp_path / "compmusic_raga" / "RagaDataset" / "Hindustani"
+    info = base / "_info_" / "path_mbid_ragaid.json"
+    other_id = "abcdefab-0000-0000-0000-abcdefabcdef"
+    data = json.loads(info.read_text())
+    data[other_id] = dict(path=data[MBID]["path"].replace(MBID, other_id), mbid=other_id, ragaid=RAGA_ID)
+    info.write_text(json.dumps(data))
+    rows = {r["mbid"]: r for r in hmd.rows(tmp_path)}
+    assert rows[other_id]["tonic_hz"] is None and rows[other_id]["pitch_path"] is None
+    assert rows[MBID]["tonic_hz"] == 146.832384
 
 
 def test_saraga_rows_and_vocal_class(tmp_path):
