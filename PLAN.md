@@ -86,10 +86,28 @@ Working rules:
 - **Split** (`data/splits/v1.csv`, committed): after the min-8-recordings and vocal filters (`vocal`/`unknown` kept) -- **306 recordings, 30 ragas** (all of HMD's ragas, 9-11 recordings each; 298 HMD + 8 Saraga), 55 artists, 147 concerts. 5 folds, balanced (61-62 each), no leakage (`validate_folds` clean). Only Khamaj is "thin" (4 concerts, so it can't be in every CV fold; correctly placed in the test fold regardless). Test-fold/train artist overlap: 0.85 -- as flagged before, results measure "new recording, mostly-known artists", not fully unseen singers.
 - **Exit:** `data/splits/v1.csv` committed. **Raga list is fixed: the 30 ragas in `data/splits/v1.csv`.**
 
-### Phase 2: Baselines: **B1 code + notebook ready**
+### Phase 2: Baselines: **B1 cross-validated, final test pending**
 - **B1** tonic-normalised pitch-class histogram (120 bins) -> logistic regression. Notebook `02_baseline_pitch_histogram.ipynb`, 4-fold CV then one final test run.
 - **B2** frozen MERT embeddings -> linear probe (needs audio, so Saraga only at first; deferred until audio access).
 - **Exit:** recording-level top-1/top-3/macro-F1/ECE and confusion matrix for B1 (and B2) on the fixed split.
+
+**B1 cross-validation results (2026-09-30)**, 30 ragas, chance level = 0.033 (1/30). Best `C = 0.1` for both tonic variants by CV top-1.
+
+| Metric (best C) | `tonic` (automatic) | `tonicFine` (manually corrected) |
+|---|---|---|
+| chunk-level top-1 | 0.690 | 0.711 |
+| **recording-level top-1** | **0.935** | **0.935** |
+| recording-level top-3 | 0.988 | 0.992 |
+| recording-level macro-F1 | 0.923 | 0.921 |
+| ECE (calibration error) | 0.139 | 0.121 |
+| top-1 std across CV folds | 0.023 | 0.020 |
+
+**Takeaways:**
+1. **A simple linear model on tonic-normalised pitch histograms already gets ~93.5% recording-level top-1 accuracy** across all 30 ragas (chance = 3.3%), with 98.8-99.2% top-3. That's a strong floor for M1 (the deep model) to beat, and roughly in line with published tonic-normalised approaches for Hindustani raga ID (e.g. PIM-v1's F1 ~0.89 on 12 ragas).
+2. **`tonic` (the dataset's automatic estimate) and `tonicFine` (manually corrected) perform statistically identically at the recording level** (0.935 vs 0.935 top-1) -- `tonicFine` only edges ahead on chunk-level accuracy, calibration and fold-to-fold stability. **This means B1 is fairly robust to small tonic-estimation error**, which is good news: the deployed app will only ever have an *automatically estimated* tonic (no manual correction possible), and this suggests that doesn't cost much accuracy, at least for this representation. Worth re-testing this robustness more aggressively in Phase 4 (larger, deliberately-injected tonic errors, not just auto-vs-manual).
+3. **Decision: `tonic` (not `tonicFine`) is the config used for the one-time held-out test**, specifically because it is closer to what inference will actually have available (an automatic estimate, not a manual correction) -- and since the two are tied, there's no accuracy cost to picking the more representative one. `tonicFine` was a cross-validation-only comparison, not separately taken to the held-out test fold (touching the test fold more than once, even to compare configs, would be a mild form of test-set leakage).
+4. **Confusions are sparse and mostly musically plausible**, not random noise: worst is `khamaj -> alahaiyabilaval` (3x with `tonic`) and `des -> gaudmalhar` (4x with `tonicFine`; only 1x with `tonic` -- with ~10 recordings/raga, a handful of flipped predictions from a small input change is within normal noise, not a real regression).
+5. **Caveats that still apply** (from section 0/1): this uses the dataset's *oracle* tonic (auto or manual), not one estimated from raw audio at inference time -- expect a real drop once the app has to estimate Sa itself. And ~85% train/test artist overlap means part of this accuracy could reflect recognising artists, not purely raga content.
 
 ### Phase 3: Main model
 - **M1** sequence model on tonic-normalised pitch (CNN+BiLSTM/GRU or small Transformer over 30 s of pitch relative to Sa), needs a GPU. This is where the deep-learning gain over B1's histogram should come from (note order, glides, phrases).
