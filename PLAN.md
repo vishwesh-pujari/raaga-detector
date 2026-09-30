@@ -136,7 +136,7 @@ Before trusting this, checked that every raga (including thin Khamaj: 6 recordin
 
 ### Phase 3: Main model
 
-#### M1: code done (`src/raaga/models/sequence.py`), needs a GPU run
+#### M1: done (frozen) -- beats B1
 
 **Why M1 exists at all:** B1's pitch-class histogram deliberately throws away melodic *order* --
 aroha/avaroha direction, ornaments, repeated phrases (see CONCEPTS.md Part A) -- to keep it as a
@@ -192,10 +192,52 @@ verbatim against a larger synthetic dataset sized closer to the real data's chun
 regime, confirming the real default hyperparameters (`batch_size=64`, `lr=1e-3`, 30 epochs) too
 converge properly, not just a hand-tuned tiny-toy config.
 - Augmentation must keep the raga intact: no naive transposition without re-normalising to Sa.
-- **Exit:** beats B1 on macro-F1. An ablation table (tonic normalisation, chunk length,
-  architecture size) is a deliberate follow-up once the default config's CV number is in --
-  matching how tonic-vs-tonicFine was done for B1 (one default first, comparisons after), not
-  bundled into the first GPU run.
+- **Exit:** beats B1 on macro-F1. **Met.**
+
+**M1 cross-validation results (2026-10-01)**, default config (`conv_channels=(32,64)`,
+`gru_hidden=128`, 168K params), 30 ragas, `TONIC="tonic"`, same split as B1.
+
+| Metric (CV mean, folds 0-3) | B1 | M1 |
+|---|---|---|
+| recording-level top-1 | 0.935 | **0.963** |
+| recording-level macro-F1 | 0.923 | **0.948** |
+| Total CV errors (of 245 recordings) | 15 | **9** |
+
+Consistent across all 4 folds (not one lucky fold): M1's per-fold top-1 ranged 0.934-0.984 vs B1's
+tighter but lower range. Cross-checked the CV output for internal consistency before trusting it:
+CV chunks (21,453) + B1's held-out-fold chunk count (5,642) = 27,095, the exact full-split total --
+confirms M1 used the identical `data/splits/v1.csv` as B1, no leaked or mismatched chunks.
+
+**Confusion mapping changed, not just shrank** -- only 2 of B1's 12 confusion pairs survive
+unchanged in M1 (`sudhsarang->madhuvanti`, `malkauns->jog`). Most notably, **B1's worst confusion,
+`khamaj -> alahaiyabilaval` (3x), is completely gone in M1** -- exactly the kind of error a
+"bag of notes" model would make on two ragas that likely share much of their note set but differ
+in melodic movement, and exactly what a model that sees note *order* should resolve. `hamsadhvani
+-> yamankalyan` (2x in B1) is also gone. M1 does introduce new confusions B1 didn't have
+(`basant -> puriyadhanasri`, 2x; `bilasakhanitodi -> darbari`, 1x) -- not every change is an
+improvement, and with ~10 recordings/raga a couple of flipped predictions is still a small-sample
+result.
+
+**M1 held-out test result (2026-10-01, frozen -- fold 4, `tonic`, default config, touched once):**
+
+| Metric | B1 (frozen) | M1 (frozen) |
+|---|---|---|
+| recording-level top-1 | 0.951 (58/61) | **0.984 (60/61)** |
+| recording-level macro-F1 | 0.936 | **0.989** |
+| rec_ece | 0.112 | 0.147 |
+
+`n_chunks=5642, n_recordings=61` -- confirmed identical to B1's held-out set before trusting the
+comparison. Training stopped early at epoch 13 (best weights were epoch 7's, `val_loss=0.9537`;
+`train_loss` kept falling to 0.20 while `val_loss` crept back up over the next 6 epochs) -- a
+concrete, real-run confirmation that the early-stopping/best-checkpoint-restore logic in `fit()`
+works as intended, not just in the synthetic tests. ECE is somewhat worse than B1's (0.147 vs
+0.112) -- deep models tend to be more overconfident than simpler ones; unaddressed for now,
+Phase 4's temperature scaling is the planned fix for both models together, not specific to M1.
+
+**M1 is now frozen at recording-level top-1 = 98.4% (macro-F1 = 0.989) on the held-out set,
+beating B1's 95.1% / 0.936. Fold 4 is not touched again for M1** (further tuning, e.g. the
+deferred `tonic` vs `tonicFine` or architecture-size ablations, happens only on folds 0-3).
+`m1_weights.pt` and `m1_test.json` are saved on Drive.
 
 #### M2 / M3: audio-based models (deferred -- see section 0)
 - **M2** tonic-normalised chroma/CQT CNN+BiLSTM from audio (PIM-v1 style), trained from scratch -- **deprioritised**. HMD audio access was rejected, and Saraga alone (108 tracks, thin across 61 ragas -- only 8 of our 306-recording split) isn't enough to train a CNN from scratch (section 0, section 1). Not pursuing this as scoped.
@@ -254,4 +296,5 @@ raaga-detector/
 2. ~~Run `notebooks/01_data_audit.ipynb`~~ -- done. `data/splits/v1.csv` committed: 306 recordings, 30 ragas.
 3. ~~Request HMD audio access on Zenodo~~ -- done, **rejected** (needs an academic affiliation this project doesn't have). Treated as permanent; not being re-requested unless something about that changes.
 4. ~~Run `notebooks/02_baseline_pitch_histogram.ipynb`~~ -- done. B1 frozen: 95.1% recording-level top-1, 0.936 macro-F1 on the held-out fold.
-5. ~~Build M1 (pitch-sequence deep model)~~ -- code done (`src/raaga/models/sequence.py`, `features/pitch.chunk_pitch_sequences`, `features/sequence_cache.py`), unit- and integration-tested locally (see Phase 3). **Next: run `notebooks/03_m1_pitch_sequence.ipynb` on a GPU** (Colab: Runtime > Change runtime type > T4 GPU), then paste back the CV table + confusion analysis, same process as B1.
+5. ~~Build M1 and run it~~ -- done. M1 frozen: 98.4% recording-level top-1, 0.989 macro-F1 on the held-out fold, beating B1 (95.1% / 0.936). See Phase 3.
+6. **Decide what's next.** Real options, not mutually exclusive: (a) Phase 4 -- calibration (temperature scaling, both models' ECE isn't great) and robustness (estimated vs annotated tonic, pitch-extractor domain gap, noisy/short clips); (b) the deferred M1 ablations (tonic vs tonicFine, architecture size) on folds 0-3 only; (c) the deferred audio-model decision (M3/MERT vs a standalone Saraga-only list, section 0); (d) start packaging M1 for inference (Phase 5). Not decided yet -- ask the user.

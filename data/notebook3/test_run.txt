@@ -1,0 +1,27 @@
+epoch 1/30  train_loss=2.3055  val_loss=1.8167
+epoch 2/30  train_loss=1.3015  val_loss=1.3509
+epoch 3/30  train_loss=0.9113  val_loss=1.1641
+epoch 4/30  train_loss=0.7127  val_loss=1.0402
+epoch 5/30  train_loss=0.5825  val_loss=1.0309
+epoch 6/30  train_loss=0.5013  val_loss=0.9977
+epoch 7/30  train_loss=0.4302  val_loss=0.9537
+epoch 8/30  train_loss=0.3742  val_loss=0.9800
+epoch 9/30  train_loss=0.3328  val_loss=1.1188
+epoch 10/30  train_loss=0.2898  val_loss=1.0454
+epoch 11/30  train_loss=0.2566  val_loss=1.0341
+epoch 12/30  train_loss=0.2396  val_loss=1.0762
+epoch 13/30  train_loss=0.2042  val_loss=0.9978
+early stopping at epoch 13 (no val improvement for 6 epochs)
+{
+  "n_chunks": 5642,
+  "n_recordings": 61,
+  "chunk_top1": 0.7181850407656859,
+  "rec_top1": 0.9836065573770492,
+  "rec_top3": 0.9836065573770492,
+  "rec_macro_f1": 0.9885714285714287,
+  "rec_ece": 0.1468087170944839
+}
+
+B1 (frozen):  rec_top1=0.951  rec_macro_f1=0.936
+M1 (this run): rec_top1=0.984  rec_macro_f1=0.989
+
