@@ -5,7 +5,7 @@ This is exactly the chunk -> clip pipeline the final app will use, so the number
 comparable with the deep models later.
 """
 
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -25,36 +25,11 @@ def make_model(C: float = 1.0):
     )
 
 
-def aggregate(proba: np.ndarray, uids: np.ndarray) -> Tuple[List[str], np.ndarray]:
-    """Chunk probabilities -> one probability vector per recording (mean log-prob, renormalised)."""
-    logp = np.log(np.clip(proba, 1e-9, 1.0))
-    order = list(dict.fromkeys(uids))
-    out = np.zeros((len(order), proba.shape[1]))
-    for i, u in enumerate(order):
-        m = logp[uids == u].mean(axis=0)
-        e = np.exp(m - m.max())
-        out[i] = e / e.sum()
-    return order, out
-
-
 def evaluate(model, data: ChunkSet) -> Dict[str, object]:
     classes = list(model.classes_)
     y_idx = np.array([classes.index(y) for y in data.y])
     chunk_p = model.predict_proba(data.X)
-    uids, rec_p = aggregate(chunk_p, data.uid)
-    first = {u: i for i, u in reversed(list(enumerate(data.uid)))}
-    rec_y = np.array([y_idx[first[u]] for u in uids])
-    return {
-        "n_chunks": len(data.X),
-        "n_recordings": len(uids),
-        "chunk_top1": metrics.topk_accuracy(chunk_p, y_idx, 1),
-        "rec_top1": metrics.topk_accuracy(rec_p, rec_y, 1),
-        "rec_top3": metrics.topk_accuracy(rec_p, rec_y, 3),
-        "rec_macro_f1": metrics.macro_f1(rec_p, rec_y),
-        "rec_ece": metrics.expected_calibration_error(rec_p, rec_y),
-        "confusion": metrics.confusion(rec_p, rec_y),
-        "classes": classes,
-    }
+    return metrics.evaluate_predictions(chunk_p, y_idx, data.uid, classes)
 
 
 def cross_validate(

@@ -19,6 +19,7 @@ _Last updated: 2026-09-30. Sections marked **(verified)** were checked against t
 | 2026-09-29 | Colab silently reused a stale kernel on the first "re-run" | Restarting cells / opening a "new" notebook does not guarantee a fresh Python process. An already-`import`-ed module keeps running from memory even after `git pull` updates the file on disk and `pip install -e .` reruns. The giveaway: the output was byte-identical to the pre-fix run, including a `pitch_path` string only the *old* code could construct. Fix: **Runtime -> Restart runtime** (or "Disconnect and delete runtime") before re-running, not just re-running cells. |
 | 2026-09-30 | **HMD audio access request rejected** | Zenodo's restricted-access form for the HMD audio (record [7278511](https://zenodo.org/record/7278511)) requires a genuine research purpose and academic institution affiliation -- the user doesn't have one to supply, so the request was denied. **HMD audio is now assumed permanently unavailable for this project.** Consequence: any audio-based model (M2, B2/MERT beyond Saraga) can only use Saraga's audio (108 tracks, 61 ragas, CC BY-NC-SA) -- a much smaller set than HMD's 300. The pitch-first plan (B1, M1) is unaffected, since it only ever needed HMD's open pitch/tonic files, never its audio. |
 | 2026-09-30 | **Decision deferred: how (or whether) to pursue an audio-based model** | Searched for an alternative to HMD's audio (see section 1 for the 7 candidates checked); none are usable now. Two real options remain for later: **(a)** a standalone Saraga-only raga list/split for audio training (not intersected with HMD's 30 -- would cover different, Saraga-specific ragas), or **(b)** transfer learning on a frozen/fine-tuned **MERT** embedding (B2/M3) instead of training an audio CNN (M2) from scratch, since transfer learning needs much less labelled audio. **User is fine with the MERT route.** Not deciding between them yet -- revisit after M1 (the pitch-based deep model) is done. |
+| 2026-09-30 | **M1 built**: sin/cos pitch-sequence representation, CNN+BiGRU+attention architecture | See Phase 3 for full reasoning. Key choices: `sin`/`cos` of the octave-folded angle (not raw cents) so the octave wrap needs no special-casing and stays automatically differentiable; circular-mean magnitude doubles as an implicit per-step confidence signal; unvoiced steps are exactly `(0,0,0)`, no padding value. CNN+BiGRU chosen over a Transformer for v1 given the small per-fold training set (~245 recordings). `eval.metrics.aggregate`/`evaluate_predictions` moved out of `models/baseline.py` (B1-specific before) into the shared `eval` module so B1 and M1 report through identical code, not just similarly-shaped code -- a deliberate refactor, not a side effect. |
 
 ---
 
@@ -134,11 +135,71 @@ Before trusting this, checked that every raga (including thin Khamaj: 6 recordin
 **B1 is now frozen at recording-level top-1 = 95.1% (macro-F1 = 0.936) on the held-out set.** This is the number M1 (the deep model, Phase 3) needs to beat to justify its extra complexity.
 
 ### Phase 3: Main model
-- **M1** sequence model on tonic-normalised pitch (CNN+BiLSTM/GRU or small Transformer over 30 s of pitch relative to Sa), needs a GPU. This is where the deep-learning gain over B1's histogram should come from (note order, glides, phrases).
+
+#### M1: code done (`src/raaga/models/sequence.py`), needs a GPU run
+
+**Why M1 exists at all:** B1's pitch-class histogram deliberately throws away melodic *order* --
+aroha/avaroha direction, ornaments, repeated phrases (see CONCEPTS.md Part A) -- to keep it as a
+"bag of notes." M1's whole job is to pick that back up. If it doesn't beat B1's frozen 95.1%
+top-1 / 0.936 macro-F1, that's a real (negative) result: it would mean, for this dataset and
+representation, note *usage* alone already captures nearly everything B1's histogram can extract,
+and note order isn't adding much on top -- worth knowing either way.
+
+**Input representation** (`features/pitch.chunk_pitch_sequences`, new): unlike B1's histogram
+(one aggregated vector per 30 s chunk), each chunk becomes a `(T, 3)` sequence -- `T = 300` steps
+of 100 ms each (`step_s = 0.1`), reusing B1's same `chunk_s=30` / `hop_s=15`. Each step is
+`(mean_sin, mean_cos, voiced_frac)`, the circular mean of `sin`/`cos` of the octave-folded angle
+`2*pi*cents_above_tonic/1200` over that step's voiced native frames, plus the fraction of the step
+that was voiced. Why this specific encoding, not raw cents or a bin index:
+- **sin/cos instead of raw cents-above-tonic**: cents wrap at the octave boundary (1199 cents and
+  1 cent are neighbouring notes, not far apart) -- sin/cos are naturally 2*pi-periodic, so this
+  wrap is handled for free, with no discontinuity for the model to work around.
+- **Circular mean's magnitude as an implicit confidence signal**: when a step's voiced frames all
+  agree on roughly the same note, sin/cos stay close to their full unit-circle values; when the
+  step is noisy or spans a fast transition, they naturally shrink toward `(0, 0)` -- without
+  needing a separate hand-built "confidence" feature.
+- **An unvoiced step is exactly `(0, 0, 0)`** -- no padding value to accidentally learn from, and
+  it sits at the centre the sin/cos features shrink toward anyway, so it's a "neutral" input the
+  conv/GRU can push through cheaply rather than a weird out-of-distribution spike.
+- Verified directly (`tests/test_pitch.py`): octave-invariant, tonic-invariant (same relative note
+  at a different absolute tonic -> identical output, same property B1's histogram has), and --
+  the one thing that actually matters for M1 vs B1 -- two chunks using the *same notes in a
+  different order* produce *different* sequences (a histogram would call them identical).
+
+**Architecture** (`models/sequence.PitchSequenceModel`): a small 1D-conv frontend (2 conv+BN+GELU+
+maxpool blocks, 32 then 64 channels -- local melodic movement, a few notes at a time) feeding a
+bidirectional GRU (128 hidden units -- longer-range structure, phrase-level) with attention pooling
+over time (lets the model weight, e.g., a strong pakad phrase more than an ambiguous stretch),
+then a linear head. Chosen over a Transformer for v1: far fewer parameters and much less data-
+hungry, which matters with only ~245 training recordings/fold; a Transformer variant is a
+reasonable later ablation if this undertrains or plateaus.
+
+**Training**: `CrossEntropyLoss` with inverse-frequency class weights (mirrors B1's
+`class_weight="balanced"`), AdamW, early stopping on validation loss. Evaluation reuses the exact
+same `eval.metrics.evaluate_predictions` (and its `aggregate` chunk->recording pipeline) that B1
+uses -- moved there from `models/baseline.py` specifically so both models' results are structured
+identically and safe to compare directly, not an incidental refactor.
+
+**Validated before handing off** (no GPU in this environment, so this is as far as local testing
+goes): unit tests for the sequence representation's correctness (octave/tonic invariance, order-
+sensitivity) and for the model (forward-pass shapes, finite gradients, short-sequence handling,
+class-weight direction); a synthetic end-to-end test that trains the real pipeline on a
+noiseless "notes in order A vs reverse order" toy task and confirms >90% accuracy (i.e. the whole
+chain -- sequence extraction -> cache -> dataset -> model -> training loop -> eval -- actually
+learns *order*, the entire point of M1); and, separately, the *actual* notebook cells (CV loop,
+confusion analysis, final-test cell, including the model-checkpoint save) were extracted and run
+verbatim against a larger synthetic dataset sized closer to the real data's chunk-per-recording
+regime, confirming the real default hyperparameters (`batch_size=64`, `lr=1e-3`, 30 epochs) too
+converge properly, not just a hand-tuned tiny-toy config.
+- Augmentation must keep the raga intact: no naive transposition without re-normalising to Sa.
+- **Exit:** beats B1 on macro-F1. An ablation table (tonic normalisation, chunk length,
+  architecture size) is a deliberate follow-up once the default config's CV number is in --
+  matching how tonic-vs-tonicFine was done for B1 (one default first, comparisons after), not
+  bundled into the first GPU run.
+
+#### M2 / M3: audio-based models (deferred -- see section 0)
 - **M2** tonic-normalised chroma/CQT CNN+BiLSTM from audio (PIM-v1 style), trained from scratch -- **deprioritised**. HMD audio access was rejected, and Saraga alone (108 tracks, thin across 61 ragas -- only 8 of our 306-recording split) isn't enough to train a CNN from scratch (section 0, section 1). Not pursuing this as scoped.
 - **M3: fine-tune MERT with a small head** -- **the preferred audio-based path instead of M2**, since transfer learning needs far less labelled audio than training from scratch, making Saraga's thin data actually usable. Decision on *whether* to pursue this at all, and on which raga list (our 30, or a standalone Saraga-only list -- section 0), deferred until after M1.
-- Augmentation must keep the raga intact: no naive transposition without re-normalising to Sa.
-- **Exit:** beats B1 on macro-F1 with an ablation table (tonic normalisation, chunk length, augmentation).
 
 ### Phase 4: Calibration and robustness
 - Temperature scaling, ECE, reliability plot, clip-level aggregation.
@@ -164,11 +225,11 @@ raaga-detector/
   src/raaga/
     env.py            # Drive/Kaggle/local paths
     data/             # remote (resumable zip download), hmd, saraga, catalog, splits, names, musicbrainz
-    features/         # pitch (tonic-normalised histograms), cache (per-recording .npz)
-    models/           # baseline (histogram + logistic regression)
-    eval/             # metrics (top-k, macro-F1, confusion, ECE)
+    features/         # pitch (tonic-normalised histograms + M1's sequences), cache/sequence_cache (per-recording .npz)
+    models/           # baseline (B1: histogram + logistic regression), sequence (M1: CNN+BiGRU over pitch sequences, torch)
+    eval/             # metrics (top-k, macro-F1, confusion, ECE, aggregate chunk->recording, evaluate_predictions -- shared by every model)
   tests/
-  notebooks/          # thin Colab/Kaggle runners only
+  notebooks/          # thin Colab/Kaggle runners only (03 needs a GPU)
 ```
 
 ---
@@ -193,4 +254,4 @@ raaga-detector/
 2. ~~Run `notebooks/01_data_audit.ipynb`~~ -- done. `data/splits/v1.csv` committed: 306 recordings, 30 ragas.
 3. ~~Request HMD audio access on Zenodo~~ -- done, **rejected** (needs an academic affiliation this project doesn't have). Treated as permanent; not being re-requested unless something about that changes.
 4. ~~Run `notebooks/02_baseline_pitch_histogram.ipynb`~~ -- done. B1 frozen: 95.1% recording-level top-1, 0.936 macro-F1 on the held-out fold.
-5. Build M1 (pitch-sequence deep model): needs to beat B1's 95.1% top-1 / 0.936 macro-F1 to justify the extra complexity.
+5. ~~Build M1 (pitch-sequence deep model)~~ -- code done (`src/raaga/models/sequence.py`, `features/pitch.chunk_pitch_sequences`, `features/sequence_cache.py`), unit- and integration-tested locally (see Phase 3). **Next: run `notebooks/03_m1_pitch_sequence.ipynb` on a GPU** (Colab: Runtime > Change runtime type > T4 GPU), then paste back the CV table + confusion analysis, same process as B1.

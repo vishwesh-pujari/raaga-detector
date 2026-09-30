@@ -18,7 +18,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+# Colab/Kaggle already ship torch, so it's kept optional here rather than a hard dependency --
+# only pull it in explicitly for local dev/testing (pip install -e ".[dev]").
+torch = ["torch"]
+dev = ["pytest", "raaga[torch]"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

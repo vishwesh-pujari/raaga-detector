@@ -49,7 +49,7 @@ def test_end_to_end(tmp_path):
 def test_aggregate_and_metrics():
     proba = np.array([[0.9, 0.1], [0.8, 0.2], [0.4, 0.6]])
     uids = np.array(["u1", "u1", "u2"])
-    order, rec = baseline.aggregate(proba, uids)
+    order, rec = metrics.aggregate(proba, uids)
     assert order == ["u1", "u2"]
     np.testing.assert_allclose(rec.sum(1), 1.0)
     assert rec.argmax(1).tolist() == [0, 1]

@@ -113,6 +113,41 @@ cheap to compute, cheap to train a model on, and a clean way to measure how much
 identification comes from "just" note emphasis before building something that also models melodic
 movement (M1).
 
+### Pitch *sequences* -- M1's input, and how it differs from B1's histogram
+
+A histogram answers "which notes, how much" but discards *when*. M1 needs "when," so instead of
+one aggregated vector per chunk, [`chunk_pitch_sequences()`](src/raaga/features/pitch.py) produces
+an **ordered sequence** per chunk: 300 steps of 100 ms each (for the default 30 s chunk), each step
+a 3-number summary of that instant's pitch. Two design choices worth explaining, since they're not
+the obvious first thing to reach for:
+
+- **Why `sin`/`cos` of the angle, not the cents value itself.** Cents-above-tonic wraps at the
+  octave (1199 cents and 1 cent are adjacent notes, not far apart) -- feeding that raw number to a
+  model means it has to somehow learn that wraparound itself, and a small pitch wobble across the
+  wrap point looks like a huge jump. Converting the octave-folded cents to an angle
+  (`theta = 2*pi*cents/1200`) and taking `(sin(theta), cos(theta))` sidesteps this entirely: it's
+  the standard "circular data" trick (the same one used for encoding e.g. time-of-day or compass
+  direction), and it's naturally, automatically periodic -- no wraparound discontinuity exists in
+  this representation at all.
+- **Why the *circular mean*, not a single frame's value.** Native pitch frames are ~4.4 ms apart,
+  much finer than the 100 ms step size, so each step actually covers ~23 native frames. Averaging
+  their `sin`/`cos` values (rather than picking one frame, or averaging the raw cents) gives a
+  useful bonus for free: if those 23 frames mostly agree on one note, the averaged `(sin, cos)`
+  stays close to the unit circle; if the pitch is unstable or mid-transition within that step, the
+  averaged vector shrinks toward `(0, 0)`. So the *magnitude* of the pair doubles as an implicit
+  "how confident/stable was the pitch here" signal, without a separately engineered confidence
+  feature. A fully unvoiced step is exactly `(0, 0)` -- sitting at the same "low confidence" region
+  the noisy case shrinks toward, rather than being an arbitrary special value the model has to
+  learn to treat differently.
+- The third number per step, `voiced_frac`, is just the fraction of that step's native frames that
+  had a pitch at all -- silence/consonants/breaths vs. sustained singing.
+
+Verified (`tests/test_pitch.py`): this representation is octave-invariant and tonic-invariant, the
+same core properties as B1's histogram -- and, the one property that actually matters for M1's
+reason to exist, two chunks using the *same notes in a different order* produce genuinely
+*different* sequences (time-reversing one exactly reproduces the other), which a histogram cannot
+distinguish at all.
+
 ### Chunking (30 s windows, 15 s hop)
 
 Recordings are long -- tens of minutes, sometimes almost two hours for a single performance -- but
@@ -242,6 +277,33 @@ combined result the way it would under a plain arithmetic mean.
    partly reflects "new recording, familiar artist" rather than "completely unseen singer" --
    flagged, not hidden, and something to specifically test later against Saraga artists who don't
    appear in HMD at all.
+7. **M1's architecture (CNN + BiGRU + attention), and why not a Transformer for v1**: a small 1D
+   convolution frontend first, over the pitch-sequence's time axis -- this picks up *local*
+   melodic movement (a handful of consecutive notes: an ornament, a short turn of phrase) the same
+   way a CNN over an image picks up local edges/textures before anything else sees the whole
+   picture. Its output feeds a **bidirectional GRU** (a recurrent network that reads the sequence
+   both forward and backward, since the whole 30 s chunk is available at once -- no need to only
+   look backward the way a live/streaming model would) to capture longer-range structure: how
+   phrases relate to each other across the chunk, closer to pakad-level pattern than note-level.
+   **Attention pooling** turns the GRU's per-time-step outputs into one fixed-size vector for the
+   classifier, by learning *which moments in the chunk matter most* for identifying the raga
+   (e.g. weighting a clear, characteristic phrase more than an ambiguous or noisy stretch) instead
+   of treating every instant equally the way a plain average would. A Transformer was the other
+   option Phase 3 named, but was set aside for this first version specifically because it's
+   substantially more data-hungry than a CNN+GRU, and there are only ~245 training recordings per
+   fold -- worth reconsidering later if this architecture plateaus.
+8. **Class weighting during training**: ragas don't have perfectly equal recording counts (9-11
+   each), so the loss function is weighted inversely to how often each class appears in the
+   training data -- a rare raga's mistakes count for more than a common raga's, so the model can't
+   get a free ride by just being good at whichever ragas happen to have slightly more examples.
+   Mirrors B1's `class_weight="balanced"`, for the same reason macro-F1 (not accuracy) is the
+   headline metric: treat every raga as equally important to get right, not weighted by how much
+   data happened to be available for it.
+9. **Early stopping**: training tracks validation loss every epoch and keeps the best-scoring
+   weights, stopping if it hasn't improved for a set number of epochs (`patience`). Deep models can
+   keep fitting the training set indefinitely long after they've stopped generalising better to
+   unseen data -- this is what actually decides when to stop, rather than an arbitrarily fixed
+   number of epochs.
 
 ---
 
@@ -267,6 +329,11 @@ combined result the way it would under a plain arithmetic mean.
 | **ECE (calibration error)** | How far the model's stated confidence is from its actual accuracy at that confidence level. |
 | **Confusion matrix** | Table of true raga vs. predicted raga, showing exactly which pairs get mixed up. |
 | **B1** | The frozen baseline: tonic-normalised pitch-class histogram -> logistic regression. |
-| **M1** | The planned deep model: a sequence model (CNN/LSTM) over tonic-normalised pitch, meant to also capture melodic order/movement that B1 ignores. |
+| **M1** | The deep model: a CNN+BiGRU+attention sequence model over tonic-normalised pitch (sin/cos encoded), meant to capture melodic order/movement that B1's histogram ignores. Beats-B1 is the exit criterion. |
+| **Circular mean** | Averaging angles (here, `sin`/`cos` of octave-folded pitch) instead of raw values, so wraparound (e.g. 1199 cents and 1 cent being neighbours) is handled correctly; its magnitude also naturally reflects how consistent/confident the underlying values were. |
+| **GRU / BiGRU** | A recurrent neural network that processes a sequence step by step, carrying forward a summary of what it's seen; "bidirectional" means it does this both forward and backward and combines the two, useful when the whole sequence is available at once (not streaming). |
+| **Attention pooling** | Turns a sequence of per-step vectors into one fixed-size vector by learning *how much each step should count*, rather than averaging every step equally. |
+| **Class weighting** | Weighting the training loss inversely to how often each class appears, so rare classes' mistakes matter as much as common classes' -- mirrors why macro-F1, not accuracy, is the headline metric. |
+| **Early stopping** | Stopping training when validation loss hasn't improved for a set number of epochs, and keeping the best-so-far weights -- prevents fitting the training set past the point of actually generalising better. |
 | **HMD** | CompMusic Hindustani Music Dataset -- 300 recordings, 30 ragas x 10, open pitch/tonic, restricted audio. |
 | **MBID** | MusicBrainz ID -- used to deduplicate recordings that appear in more than one dataset, and to look up instrument metadata. |
