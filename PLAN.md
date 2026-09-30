@@ -17,6 +17,7 @@ _Last updated: 2026-09-30. Sections marked **(verified)** were checked against t
 | 2026-09-28 | **Non-commercial use only** | Saraga (CC BY-NC-SA 4.0) can be used. Re-check licences before any public deployment of trained weights. |
 | 2026-09-29 | **Bug found and fixed**: HMD loader was silently dropping recordings | `path_mbid_ragaid.json`'s `path` field keeps punctuation (`:`, `&`) that the archive's real folder names sanitise to `_`. Reconstructing the feature-file path from that field missed any recording whose concert name has one of those characters -- 64 of 300 (21%) in the first audit run. Fixed by matching files via the mbid every filename ends in, instead of rebuilding the path from text (`src/raaga/data/hmd.py`). Verified twice: against the real archive listing (300/300 matched) and, after a genuine re-run (needed a Colab runtime restart -- see below), against the actual regenerated catalog (0 missing tonic/pitch, up from 64). |
 | 2026-09-29 | Colab silently reused a stale kernel on the first "re-run" | Restarting cells / opening a "new" notebook does not guarantee a fresh Python process. An already-`import`-ed module keeps running from memory even after `git pull` updates the file on disk and `pip install -e .` reruns. The giveaway: the output was byte-identical to the pre-fix run, including a `pitch_path` string only the *old* code could construct. Fix: **Runtime -> Restart runtime** (or "Disconnect and delete runtime") before re-running, not just re-running cells. |
+| 2026-09-30 | **HMD audio access request rejected** | Zenodo's restricted-access form for the HMD audio (record [7278511](https://zenodo.org/record/7278511)) requires a genuine research purpose and academic institution affiliation -- the user doesn't have one to supply, so the request was denied. **HMD audio is now assumed permanently unavailable for this project.** Consequence: any audio-based model (M2, B2/MERT beyond Saraga) can only use Saraga's audio (108 tracks, 61 ragas, CC BY-NC-SA) -- a much smaller set than HMD's 300. The pitch-first plan (B1, M1) is unaffected, since it only ever needed HMD's open pitch/tonic files, never its audio. |
 
 ---
 
@@ -26,7 +27,7 @@ _Last updated: 2026-09-30. Sections marked **(verified)** were checked against t
 
 | Dataset | Content | Access | Notes |
 |---|---|---|---|
-| **HMD**: CompMusic Hindustani Music Dataset (Zenodo [7278506](https://zenodo.org/records/7278506), [details](https://compmusic.upf.edu/node/328)) **(verified)** | 300 recordings, **30 ragas x 10 recordings**, ~116 h, 55 artists, 146 concerts. Per recording: raw predominant pitch (4.4 ms hop), tonic (auto and manually fine-tuned), raga label, MBID. | **Pitch/tonic/labels open** (CC BY 4.0). **Audio restricted**, request via Zenodo [7278511](https://zenodo.org/record/7278511). | Primary dataset. Balanced (10 per raga). The pitch files make a pitch-based model possible without the audio. |
+| **HMD**: CompMusic Hindustani Music Dataset (Zenodo [7278506](https://zenodo.org/records/7278506), [details](https://compmusic.upf.edu/node/328)) **(verified)** | 300 recordings, **30 ragas x 10 recordings**, ~116 h, 55 artists, 146 concerts. Per recording: raw predominant pitch (4.4 ms hop), tonic (auto and manually fine-tuned), raga label, MBID. | **Pitch/tonic/labels open** (CC BY 4.0). **Audio restricted, and permanently unavailable to this project**: the access request (Zenodo [7278511](https://zenodo.org/record/7278511)) was **rejected 2026-09-30** -- it requires a genuine research purpose / academic institution affiliation, which isn't available here. | Primary dataset. Balanced (10 per raga). The pitch files make a pitch-based model possible without the audio -- which is now the only option for HMD, not just the initial plan. |
 | **Saraga Hindustani 1.5** ([Zenodo 4301737](https://mtg.github.io/saraga/access.html)) **(verified)** | 108 tracks, ~44 h, 61 ragas, metadata with **lead instrument**, pitch, tonic. | Open. CC BY-NC-SA 4.0. Zip is 4.1 GB, of which 3.9 GB is mp3. | Too few tracks per raga to train alone. Adds recordings to HMD ragas and gives extra ragas. Audio is included, so it is the only source of raw audio for testing an audio-based front-end. |
 | PIM-v1 (Prasar Bharati) from [Explainable DL for Raga ID](https://arxiv.org/html/2406.02443v1) | Reported 191 h, 501 recordings, 144 ragas | **Unknown**, need to find out if public | Largest labeled Hindustani set reported. |
 | [Kaggle "Indian Music Raga"](https://www.kaggle.com/datasets/kcwaghmarewaghmare/indian-music-raga) | 8 ragas, short clips | Kaggle | Not used: clips likely come from few recordings, so it invites leakage. |
@@ -49,7 +50,7 @@ Practical facts learned while building the loaders **(verified)**:
 
 ## 2. Key design decisions
 
-1. **Pitch-first.** HMD's audio needs an access request, but its pitch tracks are open. So the first models work on tonic-normalised pitch. This is also the classic, strong representation for raga. An audio front-end is added when audio access arrives (or via Saraga's audio).
+1. **Pitch-first.** HMD's audio access was requested and **rejected** (see section 0 -- Zenodo requires an academic affiliation this project doesn't have), but its pitch tracks are open regardless. So the first models work on tonic-normalised pitch. This is also the classic, strong representation for raga. An audio front-end, if built, uses Saraga's audio only (HMD's is now assumed permanently out of reach).
 2. **Split by recording, grouped by concert, never by clip.** Random clip splits leak and make every model look great. `data/splits/v1.csv` is committed, and every experiment uses it. Folds 0-3 = cross-validation, **fold 4 = held-out test, evaluated once at the end**. The code validates: no concert or MBID spans folds, and fold 4 contains every raga.
 3. **Tonic normalisation.** Performers pick their own Sa; transposing pitch to Sa lets the model learn the raga instead of the key. Caveat: baselines use the tonic shipped with the dataset (an upper bound). The app must **estimate the tonic** from audio, so tonic-estimation error is an explicit robustness experiment (Phase 4). The HMD auto tonic already looks ~20 cents off on the one file inspected, so we compare `tonic` vs `tonicFine`.
 4. **Chunk-level training, clip-level prediction.** Train on 30 s chunks (15 s hop). At inference, average chunk log-probabilities. Same pipeline the app will use.
@@ -76,9 +77,9 @@ Working rules:
 
 ## 4. Phases and status
 
-### Phase 0: Setup: **code done**
-- Package (`src/raaga`), tests (26 passing), Colab/Kaggle notebooks, loaders for HMD and Saraga, split code.
-- **Still needs:** push repo to GitHub; **user requests HMD audio access** on Zenodo (only needed for audio-based models).
+### Phase 0: Setup: **done**
+- Package (`src/raaga`), tests (27 passing), Colab/Kaggle notebooks, loaders for HMD and Saraga, split code. Repo pushed to GitHub.
+- HMD audio access requested and **rejected** (see section 0) -- resolved as "not available," not a blocker.
 
 ### Phase 1: Data audit: **done**
 - `notebooks/01_data_audit.ipynb`: downloads HMD + Saraga, builds the catalog, checks vocal/instrumental, per-raga table (recordings, artists, concerts, hours), near-duplicate raga names, writes `splits/v1.csv`.
@@ -88,7 +89,7 @@ Working rules:
 
 ### Phase 2: Baselines: **B1 done (frozen)**
 - **B1** tonic-normalised pitch-class histogram (120 bins) -> logistic regression. Notebook `02_baseline_pitch_histogram.ipynb`, 4-fold CV then one final test run.
-- **B2** frozen MERT embeddings -> linear probe (needs audio, so Saraga only at first; deferred until audio access).
+- **B2** frozen MERT embeddings -> linear probe (needs audio; Saraga is now the only available source, HMD audio access was rejected -- see section 0).
 - **Exit:** recording-level top-1/top-3/macro-F1/ECE and confusion matrix for B1 (and B2) on the fixed split.
 
 **B1 cross-validation results (2026-09-30)**, 30 ragas, chance level = 0.033 (1/30). Best `C = 0.1` for both tonic variants by CV top-1.
@@ -124,7 +125,7 @@ Before trusting this, checked that every raga (including thin Khamaj: 6 recordin
 
 ### Phase 3: Main model
 - **M1** sequence model on tonic-normalised pitch (CNN+BiLSTM/GRU or small Transformer over 30 s of pitch relative to Sa), needs a GPU. This is where the deep-learning gain over B1's histogram should come from (note order, glides, phrases).
-- **M2** tonic-normalised chroma/CQT CNN+BiLSTM from audio (PIM-v1 style) once audio is available.
+- **M2** tonic-normalised chroma/CQT CNN+BiLSTM from audio (PIM-v1 style) -- **Saraga audio only** now; HMD audio access was rejected (section 0). Within our locked 30-raga split, Saraga contributes only 8 of the 306 recordings (the rest are HMD, audio-less), so M2 as originally scoped isn't viable on this split without either narrowing to Saraga's own raga set or scraping more audio some other way. Lower-priority stretch goal, not blocking.
 - **M3 (optional)** fine-tune MERT with a small head.
 - Augmentation must keep the raga intact: no naive transposition without re-normalising to Sa.
 - **Exit:** beats B1 on macro-F1 with an ablation table (tonic normalisation, chunk length, augmentation).
@@ -166,7 +167,7 @@ raaga-detector/
 
 | Risk | Mitigation |
 |---|---|
-| HMD audio access slow/denied | Pitch-first plan does not need it. Saraga has audio for front-end tests. |
+| **HMD audio access denied (confirmed 2026-09-30)** | Pitch-first plan (B1, M1) never needed it. Any audio-based model (M2, B2) is now Saraga-only -- thin within our 30-raga split (8/306 recordings), so scoped as a lower-priority stretch goal, not the main path. |
 | Only 10 recordings per raga (HMD) | Small models, heavy chunk-level augmentation of the *pitch* (small time-warps, micro-detuning), combine with Saraga, report per-raga confidence honestly. |
 | Optimistic numbers from artist overlap (~80-90%) | Report the overlap; test on Saraga artists not in HMD; do not over-claim. |
 | Annotated tonic vs estimated tonic at inference | Phase 4 experiment, and a tonic estimator in the app pipeline. |
@@ -180,6 +181,6 @@ raaga-detector/
 
 1. ~~Push this repo to GitHub~~ -- done, merged into `main` (PR #1, #2).
 2. ~~Run `notebooks/01_data_audit.ipynb`~~ -- done. `data/splits/v1.csv` committed: 306 recordings, 30 ragas.
-3. ~~Request HMD audio access on Zenodo~~ -- done, waiting on approval.
+3. ~~Request HMD audio access on Zenodo~~ -- done, **rejected** (needs an academic affiliation this project doesn't have). Treated as permanent; not being re-requested unless something about that changes.
 4. ~~Run `notebooks/02_baseline_pitch_histogram.ipynb`~~ -- done. B1 frozen: 95.1% recording-level top-1, 0.936 macro-F1 on the held-out fold.
 5. Build M1 (pitch-sequence deep model): needs to beat B1's 95.1% top-1 / 0.936 macro-F1 to justify the extra complexity.
