@@ -66,12 +66,21 @@ def fetch_members(
     include: Callable[[str], bool],
     md5: Optional[str] = None,
     verbose: bool = True,
+    marker_name: str = ".complete",
 ) -> List[Path]:
     """Download the zip at ``url``, extract members whose name satisfies ``include`` under
-    ``dest``, delete the zip. Skips everything if all wanted files are already extracted."""
+    ``dest``, delete the zip. Skips everything if all wanted files are already extracted.
+
+    ``marker_name``: the "already done" marker is scoped to what was actually extracted, not just
+    to ``dest``. Two calls with different ``include`` predicates but the same ``dest`` (e.g.
+    Saraga's text-only vs. text+audio downloads share a folder) must use different ``marker_name``s
+    -- otherwise the second call would see the first's marker and skip, silently not fetching the
+    extra files it was asked for. Reusing the same ``marker_name`` for the same ``include`` logic
+    is what makes the skip-if-already-done behaviour work at all.
+    """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
-    marker = dest / ".complete"  # written when a previous run finished extracting
+    marker = dest / marker_name  # written when a previous run finished extracting this variant
     if marker.exists():
         if verbose:
             print(f"{dest} already downloaded and extracted (found {marker}), reusing -- not re-downloading.", flush=True)

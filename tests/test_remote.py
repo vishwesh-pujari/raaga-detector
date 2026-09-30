@@ -61,6 +61,28 @@ def test_fetch_extracts_only_wanted_and_cleans_up(server, tmp_path):
     assert [p.name for p in remote.fetch_members("http://127.0.0.1:1/none.zip", dest, _want, verbose=False)] == ["a.pitch"]
 
 
+def test_different_include_predicates_need_different_marker_names(server, tmp_path):
+    """Regression test for a real bug found while adding Saraga audio support: two calls sharing
+    a `dest` but wanting different files (e.g. text-only vs text+audio) must not silently skip the
+    second call just because the first one's marker is there."""
+    url, zpath = server
+    dest = tmp_path / "out"
+    md5 = remote.md5sum(zpath)
+
+    # first call: narrow predicate, its own marker
+    narrow = remote.fetch_members(url, dest, _want, md5=md5, verbose=False, marker_name=".complete_narrow")
+    assert [p.name for p in narrow] == ["a.pitch"]
+    assert not (dest / "Root" / "Carnatic").exists()
+
+    # second call: broader predicate (also wants Carnatic), a DIFFERENT marker -- must actually
+    # fetch the extra file, not silently reuse the narrow call's result
+    def _want_both(name):
+        return "__MACOSX" not in name
+    broad = remote.fetch_members(url, dest, _want_both, md5=md5, verbose=False, marker_name=".complete_broad")
+    assert sorted(p.name for p in broad) == ["a.pitch", "b.pitch"]
+    assert (dest / "Root" / "Carnatic" / "b.pitch").exists()
+
+
 def test_bad_checksum_is_rejected(server, tmp_path):
     url, _ = server
     with pytest.raises(IOError):

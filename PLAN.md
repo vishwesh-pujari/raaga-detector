@@ -20,6 +20,8 @@ _Last updated: 2026-09-30. Sections marked **(verified)** were checked against t
 | 2026-09-30 | **HMD audio access request rejected** | Zenodo's restricted-access form for the HMD audio (record [7278511](https://zenodo.org/record/7278511)) requires a genuine research purpose and academic institution affiliation -- the user doesn't have one to supply, so the request was denied. **HMD audio is now assumed permanently unavailable for this project.** Consequence: any audio-based model (M2, B2/MERT beyond Saraga) can only use Saraga's audio (108 tracks, 61 ragas, CC BY-NC-SA) -- a much smaller set than HMD's 300. The pitch-first plan (B1, M1) is unaffected, since it only ever needed HMD's open pitch/tonic files, never its audio. |
 | 2026-09-30 | **Decision deferred: how (or whether) to pursue an audio-based model** | Searched for an alternative to HMD's audio (see section 1 for the 7 candidates checked); none are usable now. Two real options remain for later: **(a)** a standalone Saraga-only raga list/split for audio training (not intersected with HMD's 30 -- would cover different, Saraga-specific ragas), or **(b)** transfer learning on a frozen/fine-tuned **MERT** embedding (B2/M3) instead of training an audio CNN (M2) from scratch, since transfer learning needs much less labelled audio. **User is fine with the MERT route.** Not deciding between them yet -- revisit after M1 (the pitch-based deep model) is done. |
 | 2026-09-30 | **M1 built**: sin/cos pitch-sequence representation, CNN+BiGRU+attention architecture | See Phase 3 for full reasoning. Key choices: `sin`/`cos` of the octave-folded angle (not raw cents) so the octave wrap needs no special-casing and stays automatically differentiable; circular-mean magnitude doubles as an implicit per-step confidence signal; unvoiced steps are exactly `(0,0,0)`, no padding value. CNN+BiGRU chosen over a Transformer for v1 given the small per-fold training set (~245 recordings). `eval.metrics.aggregate`/`evaluate_predictions` moved out of `models/baseline.py` (B1-specific before) into the shared `eval` module so B1 and M1 report through identical code, not just similarly-shaped code -- a deliberate refactor, not a side effect. |
+| 2026-10-01 | **M1 frozen: beats B1** (98.4% top-1 / 0.989 macro-F1 vs 95.1% / 0.936, held-out test) | See Phase 3. Satisfies its exit criterion. |
+| 2026-10-01 | **Starting Phase 4a: tonic/pitch extraction from raw audio, via two decoupled pieces** | Original plan (re-run B1/M1 with estimated tonic on the existing split) was caught as unworkable before starting: 298/306 split recordings are HMD, whose audio we don't have -- only 8 Saraga recordings in the split have audio, 6 in fold 4, not enough for a real number. Split into **(1)** extractor validation against Saraga's *full* catalog (doesn't need raga labels, so the 8-recording ceiling doesn't apply) using `essentia`'s `PredominantPitchMelodia`/`TonicIndianArtMusic` -- installs cleanly, verified correct on synthetic signals (tonic algorithm specifically needs a drone-like sustained component to work, as intended: a bare monophonic tone gave a wrong answer, a signal with a tanpura-like drone was accurate to ~3 cents) -- and **(2)** a tonic-error sensitivity sweep on the full 306-recording split via *simulated* offsets into the already-known oracle tonic, evaluating the already-frozen B1/M1 at inference time only (no retraining, and methodologically the correct match to real deployment: train once, infer with whatever tonic an estimator gives you). See Phase 4a for full detail. |
 
 ---
 
@@ -136,7 +138,7 @@ Before trusting this, checked that every raga (including thin Khamaj: 6 recordin
 
 ### Phase 3: Main model
 
-#### M1: code done (`src/raaga/models/sequence.py`), needs a GPU run
+#### M1: done (frozen) -- beats B1
 
 **Why M1 exists at all:** B1's pitch-class histogram deliberately throws away melodic *order* --
 aroha/avaroha direction, ornaments, repeated phrases (see CONCEPTS.md Part A) -- to keep it as a
@@ -192,18 +194,168 @@ verbatim against a larger synthetic dataset sized closer to the real data's chun
 regime, confirming the real default hyperparameters (`batch_size=64`, `lr=1e-3`, 30 epochs) too
 converge properly, not just a hand-tuned tiny-toy config.
 - Augmentation must keep the raga intact: no naive transposition without re-normalising to Sa.
-- **Exit:** beats B1 on macro-F1. An ablation table (tonic normalisation, chunk length,
-  architecture size) is a deliberate follow-up once the default config's CV number is in --
-  matching how tonic-vs-tonicFine was done for B1 (one default first, comparisons after), not
-  bundled into the first GPU run.
+- **Exit:** beats B1 on macro-F1. **Met.**
+
+**M1 cross-validation results (2026-10-01)**, default config (`conv_channels=(32,64)`,
+`gru_hidden=128`, 168K params), 30 ragas, `TONIC="tonic"`, same split as B1.
+
+| Metric (CV mean, folds 0-3) | B1 | M1 |
+|---|---|---|
+| recording-level top-1 | 0.935 | **0.963** |
+| recording-level macro-F1 | 0.923 | **0.948** |
+| Total CV errors (of 245 recordings) | 15 | **9** |
+
+Consistent across all 4 folds (not one lucky fold): M1's per-fold top-1 ranged 0.934-0.984 vs B1's
+tighter but lower range. Cross-checked the CV output for internal consistency before trusting it:
+CV chunks (21,453) + B1's held-out-fold chunk count (5,642) = 27,095, the exact full-split total --
+confirms M1 used the identical `data/splits/v1.csv` as B1, no leaked or mismatched chunks.
+
+**Confusion mapping changed, not just shrank** -- only 2 of B1's 12 confusion pairs survive
+unchanged in M1 (`sudhsarang->madhuvanti`, `malkauns->jog`). Most notably, **B1's worst confusion,
+`khamaj -> alahaiyabilaval` (3x), is completely gone in M1** -- exactly the kind of error a
+"bag of notes" model would make on two ragas that likely share much of their note set but differ
+in melodic movement, and exactly what a model that sees note *order* should resolve. `hamsadhvani
+-> yamankalyan` (2x in B1) is also gone. M1 does introduce new confusions B1 didn't have
+(`basant -> puriyadhanasri`, 2x; `bilasakhanitodi -> darbari`, 1x) -- not every change is an
+improvement, and with ~10 recordings/raga a couple of flipped predictions is still a small-sample
+result.
+
+**M1 held-out test result (2026-10-01, frozen -- fold 4, `tonic`, default config, touched once):**
+
+| Metric | B1 (frozen) | M1 (frozen) |
+|---|---|---|
+| recording-level top-1 | 0.951 (58/61) | **0.984 (60/61)** |
+| recording-level macro-F1 | 0.936 | **0.989** |
+| rec_ece | 0.112 | 0.147 |
+
+`n_chunks=5642, n_recordings=61` -- confirmed identical to B1's held-out set before trusting the
+comparison. Training stopped early at epoch 13 (best weights were epoch 7's, `val_loss=0.9537`;
+`train_loss` kept falling to 0.20 while `val_loss` crept back up over the next 6 epochs) -- a
+concrete, real-run confirmation that the early-stopping/best-checkpoint-restore logic in `fit()`
+works as intended, not just in the synthetic tests. ECE is somewhat worse than B1's (0.147 vs
+0.112) -- deep models tend to be more overconfident than simpler ones; unaddressed for now,
+Phase 4's temperature scaling is the planned fix for both models together, not specific to M1.
+
+**M1 is now frozen at recording-level top-1 = 98.4% (macro-F1 = 0.989) on the held-out set,
+beating B1's 95.1% / 0.936. Fold 4 is not touched again for M1** (further tuning, e.g. the
+deferred `tonic` vs `tonicFine` or architecture-size ablations, happens only on folds 0-3).
+`m1_weights.pt` and `m1_test.json` are saved on Drive.
 
 #### M2 / M3: audio-based models (deferred -- see section 0)
 - **M2** tonic-normalised chroma/CQT CNN+BiLSTM from audio (PIM-v1 style), trained from scratch -- **deprioritised**. HMD audio access was rejected, and Saraga alone (108 tracks, thin across 61 ragas -- only 8 of our 306-recording split) isn't enough to train a CNN from scratch (section 0, section 1). Not pursuing this as scoped.
 - **M3: fine-tune MERT with a small head** -- **the preferred audio-based path instead of M2**, since transfer learning needs far less labelled audio than training from scratch, making Saraga's thin data actually usable. Decision on *whether* to pursue this at all, and on which raga list (our 30, or a standalone Saraga-only list -- section 0), deferred until after M1.
 
 ### Phase 4: Calibration and robustness
+
+#### 4a. Tonic/pitch extraction from raw audio -- code done, notebook run pending
+
+**The problem this solves**: every model so far (B1, M1) was trained and evaluated on *pre-extracted*
+pitch and *dataset-provided* tonic (HMD's/Saraga's own shipped files). Nothing yet takes raw audio
+and produces those two things -- which is the literal difference between "a classifier that works
+on curated dataset files" and "a web app that takes an audio clip as input." This is that piece.
+
+**Why not just re-run B1/M1 with an estimated tonic on the existing split, directly:** caught before
+starting -- 298 of the 306 split recordings are HMD, whose audio we don't have (section 0, HMD audio
+rejection) and can't estimate anything from. Only 8 Saraga recordings in the split have audio, 6 of
+them in fold 4 -- nowhere near enough for a meaningful accuracy number. So the plan is deliberately
+split into two independent pieces that don't have this problem:
+
+**Part 1 -- extractor validation, doesn't need HMD audio at all.** Build pitch/tonic extraction from
+raw audio using `essentia` (`PredominantPitchMelodia` for pitch, `TonicIndianArtMusic` for tonic --
+the same library/ecosystem CompMusic/Dunya itself is built on, not something invented for this
+project). Validate it against **Saraga's *full* catalog** (all ~100+ tracks with both audio and
+Saraga's own shipped ground-truth `.pitch`/`.ctonic.txt` files) -- this doesn't need raga labels or
+split membership at all, so the earlier 8-recording ceiling doesn't apply here; extractor accuracy
+is a different question from classification accuracy. **Verified 2026-10-01, before writing any
+pipeline code**: `essentia` installs cleanly (`pip install essentia`) and both algorithms run
+correctly. `PredominantPitchMelodia`: 99.4% voiced, median pitch within 0.003 Hz of the true tone,
+on a synthetic single-voice-like signal. `TonicIndianArtMusic`: on a synthetic signal with a
+tanpura-drone-like sustained component at the true tonic plus a melody wandering elsewhere (what
+this algorithm is actually designed to detect -- every real Hindustani recording has a tanpura
+drone; a bare monophonic tone does not), it found the tonic to within ~2.8 cents. (A first attempt
+*without* a drone component was off by a perfect fifth -- not a bug, just the wrong kind of test
+signal for an algorithm specifically built to find a sustained drone, not "the most common melody
+note." Documented so the same false alarm doesn't get re-investigated later.)
+
+**Part 2 -- tonic-error sensitivity, uses the full 306-recording split, still doesn't need HMD
+audio.** Rather than trying to get *real* estimated tonics for HMD (impossible without its audio),
+*simulate* tonic-estimation error: every recording's oracle tonic is already known (in the cached
+pitch files, no audio needed), so inject synthetic offsets of varying size into it and recompute
+B1/M1's input features (histograms/sequences) with the shifted tonic instead. Critically, **this
+evaluates the already-frozen, already-trained B1/M1 models at inference time only -- no retraining
+per offset**. That's not just cheaper, it's the methodologically correct match to the actual
+deployment scenario: the model is trained once (on the best tonic available at training time) and
+then has to cope with whatever tonic an estimator gives it at inference time on new audio -- not
+"trained and tested with the same wrong tonic," which would conflate two different effects. B1
+(seconds to retrain if ever needed) and M1 (load the already-saved `m1_weights.pt`, inference only)
+both fit this cheaply, no GPU strictly required for this part. Offset range covers both small
+systematic drift (a few cents) and larger, more catastrophic errors (~100-400 cents, e.g. an
+estimator locking onto a different scale degree entirely).
+
+**Combining the two**: Part 1 gives a real number for how far off a real extractor's tonic estimate
+typically is (in cents, on real audio). Part 2 gives a curve of accuracy vs. injected tonic error
+(on the full split, real statistical power). Reading Part 1's number off Part 2's curve gives an
+honest, data-supported estimate of real-world app accuracy -- without ever needing HMD's audio.
+
+- **Exit (4a):** a validated `estimate_tonic`/`extract_pitch` pair with a measured real-world error
+  distribution (Part 1), and a B1/M1 accuracy-vs-tonic-error sensitivity curve (Part 2).
+
+**Implementation (2026-10-01), code done, notebook run pending:**
+
+- **`features/extract.py`**: `load_audio`/`extract_pitch`/`estimate_tonic`/`extract_pitch_and_tonic`,
+  via `essentia` (`PredominantPitchMelodia`, `TonicIndianArtMusic`). `extract_pitch`'s output is a
+  drop-in replacement for `pitch.load_pitch_file()`'s convention -- usable directly by
+  `chunk_histograms`/`chunk_pitch_sequences`, no adapter layer. `essentia` is lazily imported inside
+  each function (optional dependency, new `essentia` extra in `pyproject.toml`) so the rest of
+  `raaga` stays importable without it.
+- **`data/saraga.py`**: `download(raw_home, include_audio=False)`. Found and fixed a real bug while
+  adding this: the `.complete` marker in `remote.fetch_members` didn't distinguish *which* files
+  were extracted, so a prior text-only download's marker would make a later `include_audio=True`
+  call silently skip -- the caller would think it had audio but wouldn't. Fixed by scoping the
+  marker filename to the variant (`remote.py`'s new `marker_name` parameter); regression-tested.
+  `catalog.build_catalog` now also tracks `has_audio` (Saraga only; HMD never has it).
+- **`eval/tonic_robustness.py`**: `offset_tonic`/`perturb_catalog_tonic`/`sweep`. `sweep` takes a
+  `build_and_evaluate` callback so the exact same sweep code works for B1 and M1, only the
+  model-specific closure differs (B1: retrain on unperturbed tonic once, evaluate per offset; M1:
+  load the saved `m1_weights.pt`, evaluate per offset, no training at all).
+- **`notebooks/04_tonic_robustness.ipynb`**: Part A (Saraga extractor validation), Part B (B1
+  sweep), Part C (M1 sweep), Part D (combine). No GPU required anywhere in this notebook (essentia
+  is DSP, not deep learning; Part C is inference-only).
+
+**Verified before writing any of the above** (see section 0 and this file's earlier entries for
+detail): `essentia` installs cleanly; `PredominantPitchMelodia` and `TonicIndianArtMusic` both work
+correctly on synthetic signals appropriate to what each is designed for (pitch extraction needs a
+clean melody signal; tonic estimation specifically needs a drone-like sustained component, which
+every real Hindustani recording has).
+
+**Then spot-checked against one real Saraga recording** (Raag Shree, ~52 min, fetched just for this
+check, not the full catalog -- that's what the notebook run does): `load_audio` correctly decodes
+the real `.mp3.mp3` via essentia's MonoLoader (real MP3 decoding had only been error-path-tested
+before, never against an actual file, in 6.7s for 138M samples). Tonic estimate 147.07 Hz vs. the
+shipped ground truth's 146.83 Hz -- **2.9 cents error**, matching the synthetic drone test's ~2.8
+cents almost exactly. Pitch: 71.7% voiced, and where both our track and the ground truth agreed on
+voicing, **median pitch error was 0 cents** (86.1% of frames within 50 cents) -- likely because
+Saraga's own ground truth pitch was itself produced by a Melodia-family extractor from the same
+essentia ecosystem, so this mainly confirms our usage correctly reproduces that same family of
+extraction, not that any arbitrary audio will track this cleanly. Pitch extraction took ~5.3 min of
+CPU for this one recording -- the full Saraga catalog (~100+ tracks) will take a while in the
+notebook, budget accordingly.
+
+**Test discipline**: unit tests for the offset math and the extraction functions (synthetic
+signals, documenting the drone-vs-no-drone finding as a regression check so it isn't
+re-investigated later); an end-to-end test on synthetic ragas proving the *sweep methodology
+itself* detects real degradation (perfect accuracy through 25 cents of injected error, catastrophic
+collapse at exactly 100 cents -- one semitone, matching the exact-grid nature of that synthetic
+test -- settling near/below chance beyond that); and, separately, the actual notebook cells for
+Parts B/C/D were extracted and run verbatim against synthetic data (same discipline as notebooks
+02/03) -- caught and fixed a real bug this way too: `json.dumps` in Part D crashed on the sweep
+results' leftover `confusion`/`classes` fields (a 2D numpy array isn't `float()`-serializable),
+fixed by stripping those fields in both models' `build_and_evaluate` closures before they're ever
+collected into the sweep table.
+
+#### 4b. Calibration and remaining robustness -- not started
 - Temperature scaling, ECE, reliability plot, clip-level aggregation.
-- Tonic **estimated** instead of annotated. Clip lengths 10/30/60 s. Noisy/phone recordings. Unseen artists (Saraga vs HMD). Open-set behaviour with ragas outside the label set.
+- Clip lengths 10/30/60 s. Noisy/phone recordings. Unseen artists (Saraga vs HMD). Open-set behaviour with ragas outside the label set.
 - **Exit:** calibrated top-3 output with an "uncertain" fallback.
 
 ### Phase 5: Package the model
@@ -254,4 +406,6 @@ raaga-detector/
 2. ~~Run `notebooks/01_data_audit.ipynb`~~ -- done. `data/splits/v1.csv` committed: 306 recordings, 30 ragas.
 3. ~~Request HMD audio access on Zenodo~~ -- done, **rejected** (needs an academic affiliation this project doesn't have). Treated as permanent; not being re-requested unless something about that changes.
 4. ~~Run `notebooks/02_baseline_pitch_histogram.ipynb`~~ -- done. B1 frozen: 95.1% recording-level top-1, 0.936 macro-F1 on the held-out fold.
-5. ~~Build M1 (pitch-sequence deep model)~~ -- code done (`src/raaga/models/sequence.py`, `features/pitch.chunk_pitch_sequences`, `features/sequence_cache.py`), unit- and integration-tested locally (see Phase 3). **Next: run `notebooks/03_m1_pitch_sequence.ipynb` on a GPU** (Colab: Runtime > Change runtime type > T4 GPU), then paste back the CV table + confusion analysis, same process as B1.
+5. ~~Build M1 and run it~~ -- done. M1 frozen: 98.4% recording-level top-1, 0.989 macro-F1 on the held-out fold, beating B1 (95.1% / 0.936). See Phase 3.
+6. ~~Decide what's next~~ -- **decided: Phase 4a (tonic/pitch extraction from raw audio)**, since it's the actual blocker between "trained classifier" and "app that accepts audio," and has the fewest unresolved dependencies of the options considered (no new data access, no GPU required, essentia verified working). The other options ((b) M1 ablations, (c) M3/MERT decision, (d) Phase 5 packaging) are still open for later, not abandoned.
+7. ~~Build Phase 4a~~ -- code done: `features/extract.py`, `data/saraga.py` audio support (+ a real marker-scoping bug found and fixed), `eval/tonic_robustness.py`, `notebooks/04_tonic_robustness.ipynb`. 46 tests passing locally. **Next: run `notebooks/04_tonic_robustness.ipynb`** -- no GPU needed, but Part A downloads Saraga's audio for the first time (a big, one-time download) and real-audio pitch/tonic extraction is CPU-compute-heavy (~5 min per ~50min recording observed locally), so the full Saraga catalog may take a while.

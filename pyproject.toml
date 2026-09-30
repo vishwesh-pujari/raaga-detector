@@ -21,7 +21,10 @@ dependencies = [
 # Colab/Kaggle already ship torch, so it's kept optional here rather than a hard dependency --
 # only pull it in explicitly for local dev/testing (pip install -e ".[dev]").
 torch = ["torch"]
-dev = ["pytest", "raaga[torch]"]
+# essentia is not preinstalled on Colab/Kaggle, unlike torch -- `pip install essentia` in the
+# notebook's setup cell. Optional here too, since only features/extract.py needs it.
+essentia = ["essentia"]
+dev = ["pytest", "raaga[torch]", "raaga[essentia]"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
