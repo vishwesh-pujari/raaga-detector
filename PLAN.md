@@ -338,8 +338,16 @@ voicing, **median pitch error was 0 cents** (86.1% of frames within 50 cents) --
 Saraga's own ground truth pitch was itself produced by a Melodia-family extractor from the same
 essentia ecosystem, so this mainly confirms our usage correctly reproduces that same family of
 extraction, not that any arbitrary audio will track this cleanly. Pitch extraction took ~5.3 min of
-CPU for this one recording -- the full Saraga catalog (~100+ tracks) will take a while in the
-notebook, budget accordingly.
+CPU for this one recording -- extrapolated from this real rate, **the full Saraga catalog (43.6 h
+of audio) is an estimated ~4.8 hours of CPU processing** in Part A, on top of the (now much bigger,
+since it includes audio) Saraga download.
+
+**Checkpointed 2026-10-01, before running it**: a ~5-hour loop that only wrote its output *after*
+the entire loop finished was a real risk -- a disconnect at track 90/108 would have lost everything.
+Part A's extractor-validation loop now writes a row to `results/extractor_validation.csv` after
+every recording and skips already-done ones on a re-run, so a disconnect loses only the one
+in-flight recording. Verified with a simulated mid-run crash (a synthetic loop that fails partway
+through, then resumes) before shipping this, not just written and assumed correct.
 
 **Test discipline**: unit tests for the offset math and the extraction functions (synthetic
 signals, documenting the drone-vs-no-drone finding as a regression check so it isn't
