@@ -247,7 +247,7 @@ deferred `tonic` vs `tonicFine` or architecture-size ablations, happens only on 
 
 ### Phase 4: Calibration and robustness
 
-#### 4a. Tonic/pitch extraction from raw audio -- in progress
+#### 4a. Tonic/pitch extraction from raw audio -- code done, notebook run pending
 
 **The problem this solves**: every model so far (B1, M1) was trained and evaluated on *pre-extracted*
 pitch and *dataset-provided* tonic (HMD's/Saraga's own shipped files). Nothing yet takes raw audio
@@ -299,6 +299,59 @@ honest, data-supported estimate of real-world app accuracy -- without ever needi
 
 - **Exit (4a):** a validated `estimate_tonic`/`extract_pitch` pair with a measured real-world error
   distribution (Part 1), and a B1/M1 accuracy-vs-tonic-error sensitivity curve (Part 2).
+
+**Implementation (2026-10-01), code done, notebook run pending:**
+
+- **`features/extract.py`**: `load_audio`/`extract_pitch`/`estimate_tonic`/`extract_pitch_and_tonic`,
+  via `essentia` (`PredominantPitchMelodia`, `TonicIndianArtMusic`). `extract_pitch`'s output is a
+  drop-in replacement for `pitch.load_pitch_file()`'s convention -- usable directly by
+  `chunk_histograms`/`chunk_pitch_sequences`, no adapter layer. `essentia` is lazily imported inside
+  each function (optional dependency, new `essentia` extra in `pyproject.toml`) so the rest of
+  `raaga` stays importable without it.
+- **`data/saraga.py`**: `download(raw_home, include_audio=False)`. Found and fixed a real bug while
+  adding this: the `.complete` marker in `remote.fetch_members` didn't distinguish *which* files
+  were extracted, so a prior text-only download's marker would make a later `include_audio=True`
+  call silently skip -- the caller would think it had audio but wouldn't. Fixed by scoping the
+  marker filename to the variant (`remote.py`'s new `marker_name` parameter); regression-tested.
+  `catalog.build_catalog` now also tracks `has_audio` (Saraga only; HMD never has it).
+- **`eval/tonic_robustness.py`**: `offset_tonic`/`perturb_catalog_tonic`/`sweep`. `sweep` takes a
+  `build_and_evaluate` callback so the exact same sweep code works for B1 and M1, only the
+  model-specific closure differs (B1: retrain on unperturbed tonic once, evaluate per offset; M1:
+  load the saved `m1_weights.pt`, evaluate per offset, no training at all).
+- **`notebooks/04_tonic_robustness.ipynb`**: Part A (Saraga extractor validation), Part B (B1
+  sweep), Part C (M1 sweep), Part D (combine). No GPU required anywhere in this notebook (essentia
+  is DSP, not deep learning; Part C is inference-only).
+
+**Verified before writing any of the above** (see section 0 and this file's earlier entries for
+detail): `essentia` installs cleanly; `PredominantPitchMelodia` and `TonicIndianArtMusic` both work
+correctly on synthetic signals appropriate to what each is designed for (pitch extraction needs a
+clean melody signal; tonic estimation specifically needs a drone-like sustained component, which
+every real Hindustani recording has).
+
+**Then spot-checked against one real Saraga recording** (Raag Shree, ~52 min, fetched just for this
+check, not the full catalog -- that's what the notebook run does): `load_audio` correctly decodes
+the real `.mp3.mp3` via essentia's MonoLoader (real MP3 decoding had only been error-path-tested
+before, never against an actual file, in 6.7s for 138M samples). Tonic estimate 147.07 Hz vs. the
+shipped ground truth's 146.83 Hz -- **2.9 cents error**, matching the synthetic drone test's ~2.8
+cents almost exactly. Pitch: 71.7% voiced, and where both our track and the ground truth agreed on
+voicing, **median pitch error was 0 cents** (86.1% of frames within 50 cents) -- likely because
+Saraga's own ground truth pitch was itself produced by a Melodia-family extractor from the same
+essentia ecosystem, so this mainly confirms our usage correctly reproduces that same family of
+extraction, not that any arbitrary audio will track this cleanly. Pitch extraction took ~5.3 min of
+CPU for this one recording -- the full Saraga catalog (~100+ tracks) will take a while in the
+notebook, budget accordingly.
+
+**Test discipline**: unit tests for the offset math and the extraction functions (synthetic
+signals, documenting the drone-vs-no-drone finding as a regression check so it isn't
+re-investigated later); an end-to-end test on synthetic ragas proving the *sweep methodology
+itself* detects real degradation (perfect accuracy through 25 cents of injected error, catastrophic
+collapse at exactly 100 cents -- one semitone, matching the exact-grid nature of that synthetic
+test -- settling near/below chance beyond that); and, separately, the actual notebook cells for
+Parts B/C/D were extracted and run verbatim against synthetic data (same discipline as notebooks
+02/03) -- caught and fixed a real bug this way too: `json.dumps` in Part D crashed on the sweep
+results' leftover `confusion`/`classes` fields (a 2D numpy array isn't `float()`-serializable),
+fixed by stripping those fields in both models' `build_and_evaluate` closures before they're ever
+collected into the sweep table.
 
 #### 4b. Calibration and remaining robustness -- not started
 - Temperature scaling, ECE, reliability plot, clip-level aggregation.
@@ -355,4 +408,4 @@ raaga-detector/
 4. ~~Run `notebooks/02_baseline_pitch_histogram.ipynb`~~ -- done. B1 frozen: 95.1% recording-level top-1, 0.936 macro-F1 on the held-out fold.
 5. ~~Build M1 and run it~~ -- done. M1 frozen: 98.4% recording-level top-1, 0.989 macro-F1 on the held-out fold, beating B1 (95.1% / 0.936). See Phase 3.
 6. ~~Decide what's next~~ -- **decided: Phase 4a (tonic/pitch extraction from raw audio)**, since it's the actual blocker between "trained classifier" and "app that accepts audio," and has the fewest unresolved dependencies of the options considered (no new data access, no GPU required, essentia verified working). The other options ((b) M1 ablations, (c) M3/MERT decision, (d) Phase 5 packaging) are still open for later, not abandoned.
-7. **In progress: Phase 4a.** `src/raaga/features/extract.py` (pitch/tonic from raw audio via essentia), `data/saraga.py` audio download support, `eval/tonic_robustness.py` (offset injection + re-evaluation), `notebooks/04_tonic_robustness.ipynb`.
+7. ~~Build Phase 4a~~ -- code done: `features/extract.py`, `data/saraga.py` audio support (+ a real marker-scoping bug found and fixed), `eval/tonic_robustness.py`, `notebooks/04_tonic_robustness.ipynb`. 46 tests passing locally. **Next: run `notebooks/04_tonic_robustness.ipynb`** -- no GPU needed, but Part A downloads Saraga's audio for the first time (a big, one-time download) and real-audio pitch/tonic extraction is CPU-compute-heavy (~5 min per ~50min recording observed locally), so the full Saraga catalog may take a while.

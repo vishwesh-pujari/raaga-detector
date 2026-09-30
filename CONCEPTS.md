@@ -166,6 +166,53 @@ recording and computes a separate histogram per window. Three reasons:
 3. Chunks with very little voiced signal (silence, a long instrumental tuning passage, tanpura
    only) are dropped (`min_voiced_s`), so the histogram isn't built from mostly-nothing.
 
+### Getting pitch and tonic from raw audio (Phase 4a)
+
+Everything above assumes the pitch track and tonic already exist -- true for HMD/Saraga, which
+ship them, but not true for whatever a user uploads to the eventual app. `features/extract.py`
+closes that gap using `essentia`, the signal-processing library the CompMusic/Dunya project (the
+source of HMD and Saraga) is itself built on -- not a tool invented for this project, and one whose
+outputs the dataset's own creators already trusted enough to build the training labels from.
+
+- **`PredominantPitchMelodia`** ("Melodia"): given a mix of a lead melodic line plus accompaniment
+  (tabla, tanpura, harmonium), estimates the pitch of whichever line is most prominent moment to
+  moment. This is the same kind of algorithm that produced HMD's/Saraga's own `.pitch` files.
+- **`TonicIndianArtMusic`**: estimates Sa specifically by finding a sustained, drone-like tonal
+  centre in the signal -- i.e. it is built to detect the tanpura, not to average "whichever note
+  the melody uses most." This distinction matters and was confirmed directly, not assumed: a
+  synthetic monophonic melody tone with no drone gave a wrong tonic (off by a perfect fifth);
+  adding a quiet, sustained drone-like component at the true tonic (everything else unchanged) got
+  it right to within ~3 cents. Every real Hindustani recording has a tanpura drone, so this isn't a
+  practical limitation -- it's exactly what makes the algorithm work at all.
+
+`extract_pitch`'s output uses the same `(times_s, freqs_hz)` convention as the dataset's own pitch
+files, so it plugs directly into `chunk_histograms`/`chunk_pitch_sequences` with no adapter code --
+the same feature pipeline B1/M1 were trained on is what will run at inference time.
+
+### Simulating tonic error instead of measuring it directly (Phase 4a)
+
+The natural experiment -- "run the real extractor on the training recordings' audio and see how
+much accuracy drops with the *real* estimated tonic" -- turned out to be impossible to do properly:
+298 of 306 split recordings are HMD, whose audio isn't available (section 0). So the question is
+split into two independent pieces that don't have this problem:
+
+1. **How accurate is the extractor, really?** Measured against Saraga's *full* audio catalog
+   (ground truth pitch/tonic ships with it) -- this doesn't need raga labels, so Saraga's thinness
+   within the 30-raga split doesn't matter here.
+2. **How much does tonic error actually hurt B1/M1?** Simulated by injecting a synthetic offset
+   (in cents -- see `offset_tonic()`) into every recording's already-known *oracle* tonic and
+   recomputing features with the wrong value, on the *full* 306-recording split. No audio needed
+   for this part either, since the perturbation works directly on the oracle tonic already sitting
+   in the cached pitch files.
+
+Reading (1)'s measured real-world error off (2)'s sensitivity curve gives an estimate of real-world
+accuracy without ever needing HMD's audio. Critically, (2) evaluates the **already-frozen** B1/M1
+models at inference time only, never retraining on the perturbed tonic -- that's not just cheaper,
+it's the methodologically correct match to actual deployment: a model is trained once, on the best
+tonic available at training time, and then has to cope with whatever tonic an estimator produces
+for new audio later. Training *and* testing with the same wrong tonic would measure something
+different (and easier) than what the app actually faces.
+
 ---
 
 ## Part C: Machine learning methodology

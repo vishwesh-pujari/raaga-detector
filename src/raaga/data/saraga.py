@@ -19,11 +19,25 @@ def _wanted(name: str) -> bool:
     return "__MACOSX" not in name and name.endswith((".json", ".pitch.txt", ".ctonic.txt", "file_paths.csv"))
 
 
-def download(raw_home: Path) -> None:
-    """Downloads the ~4.1 GB zip once, keeps metadata, pitch and tonic (no audio), deletes the zip."""
+def _wanted_with_audio(name: str) -> bool:
+    return _wanted(name) or ("__MACOSX" not in name and name.endswith(".mp3.mp3"))
+
+
+def download(raw_home: Path, include_audio: bool = False) -> None:
+    """Downloads the ~4.1 GB zip once and keeps metadata, pitch and tonic, deleting the zip.
+
+    ``include_audio=False`` (the default, used by every existing notebook): skips the ~3.9 GB of
+    mp3s, since B1/M1 never need Saraga's audio. Set ``True`` for Phase 4a's extractor validation,
+    which specifically does need it -- this downloads the full zip either way (Zenodo doesn't
+    support partial zip download, see ``remote.py``), just keeps more of it.
+    """
     from raaga.data.remote import fetch_members
 
-    fetch_members(URL, Path(raw_home) / "saraga_hindustani", _wanted, md5="ea9ed2885ea37a1b10e42f60cf299702")
+    wanted = _wanted_with_audio if include_audio else _wanted
+    marker = ".complete_with_audio" if include_audio else ".complete"
+    fetch_members(
+        URL, Path(raw_home) / "saraga_hindustani", wanted, md5="ea9ed2885ea37a1b10e42f60cf299702", marker_name=marker
+    )
 
 
 def vocal_class(metadata: dict) -> str:
@@ -66,6 +80,7 @@ def rows(raw_home: Path) -> List[dict]:
                 mbid=md.get("mbid"),
                 tonic_hz=_read_float(f"{stem}.ctonic.txt"),
                 pitch_path=f"{stem}.pitch.txt",
+                audio_path=f"{stem}.mp3.mp3",  # only present if downloaded with include_audio=True
                 vocal_class=vocal_class(md),
             )
         )

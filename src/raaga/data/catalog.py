@@ -1,7 +1,9 @@
 """One table describing every usable Hindustani recording, regardless of source dataset.
 
 Columns: uid, dataset, track_id, raga_raw, raga (normalised), artist, concert, mbid, tonic_hz,
-pitch_path, has_pitch, vocal_class, plus duration_s / voiced_s after ``add_pitch_stats``.
+pitch_path, has_pitch, vocal_class, plus duration_s / voiced_s after ``add_pitch_stats``. Saraga
+rows also get audio_path/has_audio (only True if downloaded with ``saraga.download(include_audio=True)``,
+see Phase 4a); HMD rows never have audio (access was rejected, see PLAN.md section 0).
 """
 
 import os
@@ -34,6 +36,10 @@ def build_catalog(
     df["raga"] = df["raga_raw"].map(lambda n: normalize_raga(n, ra))
     df["artist"] = df["artist"].map(lambda n: normalize_raga(n, aa) if isinstance(n, str) else n)
     df["has_pitch"] = df["pitch_path"].map(lambda p: bool(p) and os.path.exists(p))
+    if "audio_path" in df:
+        df["has_audio"] = df["audio_path"].map(lambda p: bool(p) and isinstance(p, str) and os.path.exists(p))
+    else:
+        df["has_audio"] = False
     # The same recording can be in both datasets; keep the first (HMD, listed first).
     has_mbid = df["mbid"].notna() & (df["mbid"] != "")
     dup = df.duplicated("mbid", keep="first") & has_mbid

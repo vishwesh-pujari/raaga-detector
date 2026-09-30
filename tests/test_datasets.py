@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 
 import pandas as pd
 
@@ -75,6 +76,9 @@ def test_saraga_rows_and_vocal_class(tmp_path):
     (row,) = saraga.rows(tmp_path)
     assert row["vocal_class"] == "vocal" and row["raga_raw"] == "Śrī" and row["tonic_hz"] == 138.5
     assert row["concert"] == "Raag Shree by Deb"
+    # audio_path is always computed (matches the real archive's "<stem>.mp3.mp3" naming), even
+    # when the file hasn't actually been downloaded (has_audio, checked in catalog.py, is False then)
+    assert row["audio_path"].endswith("Raag Shree.mp3.mp3")
 
     other = tmp_path / "other"
     _make_saraga(other, lead_instrument="Sitar")
@@ -86,6 +90,15 @@ def test_catalog_merges_and_dedups(tmp_path):
     _make_saraga(tmp_path)
     df = catalog.build_catalog(tmp_path, include_saraga=True)
     assert set(df.dataset) == {"hmd", "saraga"} and df.has_pitch.all()
+    # audio was not downloaded in this fixture (include_audio defaults to False) -- has_audio
+    # must reflect that, not just the presence of an audio_path string
+    assert not df.has_audio.any()
+    saraga_row = df[df.dataset == "saraga"].iloc[0]
+    Path(saraga_row.audio_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(saraga_row.audio_path).write_bytes(b"fake mp3 bytes")
+    df2 = catalog.build_catalog(tmp_path, include_saraga=True)
+    assert df2[df2.dataset == "saraga"].iloc[0].has_audio
+    assert not df2[df2.dataset == "hmd"].iloc[0].has_audio  # HMD never has audio
     # 'Śrī' and 'Bāgēśrī' are different ragas
     assert df.raga.nunique() == 2
     # a recording present in both datasets is kept once (HMD wins)
