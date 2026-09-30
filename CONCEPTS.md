@@ -32,8 +32,10 @@ just by which notes occur. A model that only knows "which notes were used, how m
 baseline, see Part D) is throwing away the aroha/avaroha direction, the ornaments, and the phrase
 order -- and yet it still gets ~95% accuracy (see [PLAN.md](PLAN.md)), which tells us the note-usage
 distribution alone is already a very strong signal for telling ragas apart, at least among the 30
-in our dataset. It also tells us *what's left on the table* for a model that does use melodic
-order (the planned deep model, M1) to pick up.
+in our dataset. It also told us *what was left on the table* for a model that does use melodic
+order to pick up -- and M1 (the deep model that does exactly that) confirmed there was real signal
+left: it beat B1 on the same held-out set (numbers in PLAN.md), and specifically fixed B1's worst
+confusion pair, which is the kind of mistake a "bag of notes" model would be expected to make.
 
 ### Sa (the tonic) -- the single most important idea in this whole pipeline
 
@@ -245,6 +247,12 @@ combined result the way it would under a plain arithmetic mean.
 
 ## Part D: This project's pipeline, end to end, and why
 
+**Naming convention**: models are named `<letter><number>`. **B** = **B**aseline (Phase 2 -- B1
+is the pitch-histogram + logistic-regression model; B2 was the planned, not-yet-built frozen-MERT
+baseline). **M** = the actual deep **M**odels (Phase 3 -- M1 is the CNN+BiGRU sequence model; M2/M3
+are the deferred audio-based ones). The number is just build order within that letter, not a
+version number of the same model. Current results for each live in PLAN.md, not here.
+
 1. **Data**: two datasets merged, CompMusic's Hindustani Music Dataset (HMD -- balanced, 30 ragas
    x 10 recordings, pitch/tonic open, audio restricted) and Saraga Hindustani (fewer recordings
    but includes audio and explicit instrument metadata). Merged so ragas get more recordings
@@ -328,8 +336,8 @@ combined result the way it would under a plain arithmetic mean.
 | **Chance level** | 1 / (number of ragas) -- the baseline "random guess" score everything should be compared against. |
 | **ECE (calibration error)** | How far the model's stated confidence is from its actual accuracy at that confidence level. |
 | **Confusion matrix** | Table of true raga vs. predicted raga, showing exactly which pairs get mixed up. |
-| **B1** | The frozen baseline: tonic-normalised pitch-class histogram -> logistic regression. |
-| **M1** | The deep model: a CNN+BiGRU+attention sequence model over tonic-normalised pitch (sin/cos encoded), meant to capture melodic order/movement that B1's histogram ignores. Beats-B1 is the exit criterion. |
+| **B1** | The frozen baseline: tonic-normalised pitch-class histogram -> logistic regression. "B" = Baseline. |
+| **M1** | The frozen deep model: a CNN+BiGRU+attention sequence model over tonic-normalised pitch (sin/cos encoded), capturing melodic order/movement that B1's histogram ignores. "M" = (Main) Model. Frozen result: beats B1 on the held-out test (numbers in PLAN.md, not duplicated here). |
 | **Circular mean** | Averaging angles (here, `sin`/`cos` of octave-folded pitch) instead of raw values, so wraparound (e.g. 1199 cents and 1 cent being neighbours) is handled correctly; its magnitude also naturally reflects how consistent/confident the underlying values were. |
 | **GRU / BiGRU** | A recurrent neural network that processes a sequence step by step, carrying forward a summary of what it's seen; "bidirectional" means it does this both forward and backward and combines the two, useful when the whole sequence is available at once (not streaming). |
 | **Attention pooling** | Turns a sequence of per-step vectors into one fixed-size vector by learning *how much each step should count*, rather than averaging every step equally. |
