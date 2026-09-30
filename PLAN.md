@@ -15,7 +15,8 @@ _Last updated: 2026-09-28. Sections marked **(verified)** were checked against t
 | 2026-09-28 | **Vocal only** at first | Drop instrumental recordings. Saraga labels the lead instrument, so it is filtered exactly. HMD has no instrument field: its 55 artists look like vocalists (possible exception: Gopal Mishra, 4 recordings), confirmed via MusicBrainz in notebook 01. |
 | 2026-09-28 | **No fixed raga list**: use whatever the data supports | Label set = ragas with enough recordings after merging datasets (HMD alone gives 30). |
 | 2026-09-28 | **Non-commercial use only** | Saraga (CC BY-NC-SA 4.0) can be used. Re-check licences before any public deployment of trained weights. |
-| 2026-09-29 | **Bug found and fixed**: HMD loader was silently dropping recordings | `path_mbid_ragaid.json`'s `path` field keeps punctuation (`:`, `&`) that the archive's real folder names sanitise to `_`. Reconstructing the feature-file path from that field missed any recording whose concert name has one of those characters -- 64 of 300 (21%) in the user's first audit run. Fixed by matching files via the mbid every filename ends in, instead of rebuilding the path from text (`src/raaga/data/hmd.py`, verified 300/300 against the real archive). **The `data/splits/v1.csv` from the first run predates this fix and undercounts -- notebook 01 needs a re-run.** |
+| 2026-09-29 | **Bug found and fixed**: HMD loader was silently dropping recordings | `path_mbid_ragaid.json`'s `path` field keeps punctuation (`:`, `&`) that the archive's real folder names sanitise to `_`. Reconstructing the feature-file path from that field missed any recording whose concert name has one of those characters -- 64 of 300 (21%) in the first audit run. Fixed by matching files via the mbid every filename ends in, instead of rebuilding the path from text (`src/raaga/data/hmd.py`). Verified twice: against the real archive listing (300/300 matched) and, after a genuine re-run (needed a Colab runtime restart -- see below), against the actual regenerated catalog (0 missing tonic/pitch, up from 64). |
+| 2026-09-29 | Colab silently reused a stale kernel on the first "re-run" | Restarting cells / opening a "new" notebook does not guarantee a fresh Python process. An already-`import`-ed module keeps running from memory even after `git pull` updates the file on disk and `pip install -e .` reruns. The giveaway: the output was byte-identical to the pre-fix run, including a `pitch_path` string only the *old* code could construct. Fix: **Runtime -> Restart runtime** (or "Disconnect and delete runtime") before re-running, not just re-running cells. |
 
 ---
 
@@ -79,10 +80,11 @@ Working rules:
 - Package (`src/raaga`), tests (26 passing), Colab/Kaggle notebooks, loaders for HMD and Saraga, split code.
 - **Still needs:** push repo to GitHub; **user requests HMD audio access** on Zenodo (only needed for audio-based models).
 
-### Phase 1: Data audit: **first run done, needs a re-run after the mbid-matching fix**
+### Phase 1: Data audit: **done**
 - `notebooks/01_data_audit.ipynb`: downloads HMD + Saraga, builds the catalog, checks vocal/instrumental, per-raga table (recordings, artists, concerts, hours), near-duplicate raga names, writes `splits/v1.csv`.
-- First run (pre-fix): 370 catalog recordings (300 HMD + 70 Saraga after dedup), 341 vocal / 27 unknown / 2 instrumental. After the min-8-recordings and vocal filters: 163 recordings, 18 ragas, 43 artists, 89 concerts -- undercounted because of the HMD bug above (64 recordings wrongly missing pitch/tonic). Re-running with the fix should recover most of those 64 and likely push several ragas that were just under the min-8 threshold back in, closer to HMD's real 30.
-- **Exit:** `data/splits/v1.csv` regenerated with the fix and committed; raga list fixed from the audit numbers.
+- **Catalog** (`data/catalog.csv`, not committed -- has machine-local paths): 370 recordings (300 HMD + 70 Saraga after dedup). 0 missing tonic/pitch (was 64 before the fix). Vocal/instrumental: 341 vocal, 27 unknown, 2 instrumental (Saraga's own metadata; HMD's MusicBrainz check found no clear instrumentalists). 67 distinct raga names before the min-recordings filter.
+- **Split** (`data/splits/v1.csv`, committed): after the min-8-recordings and vocal filters (`vocal`/`unknown` kept) -- **306 recordings, 30 ragas** (all of HMD's ragas, 9-11 recordings each; 298 HMD + 8 Saraga), 55 artists, 147 concerts. 5 folds, balanced (61-62 each), no leakage (`validate_folds` clean). Only Khamaj is "thin" (4 concerts, so it can't be in every CV fold; correctly placed in the test fold regardless). Test-fold/train artist overlap: 0.85 -- as flagged before, results measure "new recording, mostly-known artists", not fully unseen singers.
+- **Exit:** `data/splits/v1.csv` committed. **Raga list is fixed: the 30 ragas in `data/splits/v1.csv`.**
 
 ### Phase 2: Baselines: **B1 code + notebook ready**
 - **B1** tonic-normalised pitch-class histogram (120 bins) -> logistic regression. Notebook `02_baseline_pitch_histogram.ipynb`, 4-fold CV then one final test run.
@@ -145,9 +147,8 @@ raaga-detector/
 
 ## 7. Immediate next steps
 
-1. Push this repo to GitHub (Colab clones it).
-2. Run `notebooks/01_data_audit.ipynb` on Colab (CPU): ~10-20 min mostly downloading. Paste the per-raga table and the split summary back here, then update this plan (final raga list, vocal filter).
-3. Commit `data/splits/v1.csv`.
+1. ~~Push this repo to GitHub~~ -- done, merged into `main` (PR #1, #2).
+2. ~~Run `notebooks/01_data_audit.ipynb`~~ -- done. `data/splits/v1.csv` committed: 306 recordings, 30 ragas.
+3. ~~Request HMD audio access on Zenodo~~ -- done, waiting on approval.
 4. Run `notebooks/02_baseline_pitch_histogram.ipynb`: first accuracy number (with `TONIC = "tonic"` and `"tonicFine"`).
-5. Request HMD audio access on Zenodo (needs the user).
-6. Build M1 (pitch-sequence deep model) once the B1 number is in.
+5. Build M1 (pitch-sequence deep model) once the B1 number is in.
