@@ -7,7 +7,7 @@ Hindustani raga recognition from audio (research project, non-commercial). See [
 1. Push this repo to GitHub, open a notebook from `notebooks/` in Colab (File > Open notebook > GitHub).
 2. Run `01_data_audit.ipynb`, then `02_baseline_pitch_histogram.ipynb`. CPU runtime is enough for these two.
 
-Storage: the big Zenodo zips (~7.7 GB combined) are downloaded to Colab/Kaggle's own local disk and trimmed down to their pitch/tonic files (~2.5 GB) there -- never to your Google Drive. Drive is only used, optionally, to persist small results (catalog table, split file, caches; well under 100 MB) between sessions. It's off by default (`MOUNT_DRIVE = False` in the setup cell); notebook 01 instead ends by downloading `catalog.csv` and `splits/v1.csv` straight to your computer. Set `MOUNT_DRIVE = True` if you have Drive space and want caches to survive a session restart.
+Storage: the big Zenodo zips (~7.7 GB combined) are downloaded to Colab/Kaggle's own local disk and trimmed down to their pitch/tonic files (~2.5 GB) there -- never to your Google Drive. Drive is used to persist the small results (catalog table, split file, feature caches; well under 100 MB total) between sessions and notebooks -- `MOUNT_DRIVE = True` by default in each notebook's setup cell. Set it to `False` in a given run if you want to work on that session's local disk only (e.g. short on Drive space that day); notebooks 02/03 then fall back to asking you to upload `splits/v1.csv` from your computer, and notebook 01 ends by downloading `catalog.csv`/`splits/v1.csv` straight to your computer instead.
 
 ## Local (tests only)
 
