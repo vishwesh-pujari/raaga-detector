@@ -86,7 +86,7 @@ Working rules:
 - **Split** (`data/splits/v1.csv`, committed): after the min-8-recordings and vocal filters (`vocal`/`unknown` kept) -- **306 recordings, 30 ragas** (all of HMD's ragas, 9-11 recordings each; 298 HMD + 8 Saraga), 55 artists, 147 concerts. 5 folds, balanced (61-62 each), no leakage (`validate_folds` clean). Only Khamaj is "thin" (4 concerts, so it can't be in every CV fold; correctly placed in the test fold regardless). Test-fold/train artist overlap: 0.85 -- as flagged before, results measure "new recording, mostly-known artists", not fully unseen singers.
 - **Exit:** `data/splits/v1.csv` committed. **Raga list is fixed: the 30 ragas in `data/splits/v1.csv`.**
 
-### Phase 2: Baselines: **B1 cross-validated, final test pending**
+### Phase 2: Baselines: **B1 done (frozen)**
 - **B1** tonic-normalised pitch-class histogram (120 bins) -> logistic regression. Notebook `02_baseline_pitch_histogram.ipynb`, 4-fold CV then one final test run.
 - **B2** frozen MERT embeddings -> linear probe (needs audio, so Saraga only at first; deferred until audio access).
 - **Exit:** recording-level top-1/top-3/macro-F1/ECE and confusion matrix for B1 (and B2) on the fixed split.
@@ -108,6 +108,19 @@ Working rules:
 3. **Decision: `tonic` (not `tonicFine`) is the config used for the one-time held-out test**, specifically because it is closer to what inference will actually have available (an automatic estimate, not a manual correction) -- and since the two are tied, there's no accuracy cost to picking the more representative one. `tonicFine` was a cross-validation-only comparison, not separately taken to the held-out test fold (touching the test fold more than once, even to compare configs, would be a mild form of test-set leakage).
 4. **Confusions are sparse and mostly musically plausible**, not random noise: worst is `khamaj -> alahaiyabilaval` (3x with `tonic`) and `des -> gaudmalhar` (4x with `tonicFine`; only 1x with `tonic` -- with ~10 recordings/raga, a handful of flipped predictions from a small input change is within normal noise, not a real regression).
 5. **Caveats that still apply** (from section 0/1): this uses the dataset's *oracle* tonic (auto or manual), not one estimated from raw audio at inference time -- expect a real drop once the app has to estimate Sa itself. And ~85% train/test artist overlap means part of this accuracy could reflect recognising artists, not purely raga content.
+
+**B1 held-out test result (2026-09-30, frozen -- fold 4, `tonic`, `C = 0.1`, touched once and not revisited):**
+
+| Metric | CV mean (folds 0-3) | Held-out test (fold 4, n=61) |
+|---|---|---|
+| recording-level top-1 | 0.935 | **0.951** (58/61) |
+| recording-level top-3 | 0.988 | 0.967 (59/61) |
+| recording-level macro-F1 | 0.923 | 0.936 |
+| ECE | 0.139 | 0.112 |
+
+Before trusting this, checked that every raga (including thin Khamaj: 6 recordings spread across folds 0-3, 4 in the test fold) is actually present in the training set -- confirmed, all 30 ragas are. Test top-1/macro-F1/ECE all landed at or slightly better than the CV mean (within 1 CV fold-to-fold std of 0.023), so the CV estimate was honest, not optimistic -- no sign of overfitting to the CV folds. Top-3 looks a little low relative to top-1 only because of the small sample (61 recordings): of the 3 misses, 2 were wrong even within top-3, which at this sample size is not a meaningful signal on its own.
+
+**B1 is now frozen at recording-level top-1 = 95.1% (macro-F1 = 0.936) on the held-out set.** This is the number M1 (the deep model, Phase 3) needs to beat to justify its extra complexity.
 
 ### Phase 3: Main model
 - **M1** sequence model on tonic-normalised pitch (CNN+BiLSTM/GRU or small Transformer over 30 s of pitch relative to Sa), needs a GPU. This is where the deep-learning gain over B1's histogram should come from (note order, glides, phrases).
@@ -168,5 +181,5 @@ raaga-detector/
 1. ~~Push this repo to GitHub~~ -- done, merged into `main` (PR #1, #2).
 2. ~~Run `notebooks/01_data_audit.ipynb`~~ -- done. `data/splits/v1.csv` committed: 306 recordings, 30 ragas.
 3. ~~Request HMD audio access on Zenodo~~ -- done, waiting on approval.
-4. Run `notebooks/02_baseline_pitch_histogram.ipynb`: first accuracy number (with `TONIC = "tonic"` and `"tonicFine"`).
-5. Build M1 (pitch-sequence deep model) once the B1 number is in.
+4. ~~Run `notebooks/02_baseline_pitch_histogram.ipynb`~~ -- done. B1 frozen: 95.1% recording-level top-1, 0.936 macro-F1 on the held-out fold.
+5. Build M1 (pitch-sequence deep model): needs to beat B1's 95.1% top-1 / 0.936 macro-F1 to justify the extra complexity.
