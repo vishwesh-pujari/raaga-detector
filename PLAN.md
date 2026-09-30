@@ -4,7 +4,7 @@ Goal: a web app that takes an audio clip of **Hindustani** classical music and r
 Current focus: **the deep-learning model only** (Phases 0-5). The web app (Phase 6) comes after.
 All training runs on free cloud GPUs/CPUs (Colab / Kaggle), never locally.
 
-_Last updated: 2026-09-28. Sections marked **(verified)** were checked against the actual archives; the rest comes from papers/search summaries and should be treated as "to verify"._
+_Last updated: 2026-09-30. Sections marked **(verified)** were checked against the actual archives; the rest comes from papers/search summaries and should be treated as "to verify". See [CONCEPTS.md](CONCEPTS.md) for what the terms used below mean and why things are done this way._
 
 ---
 

@@ -1,6 +1,6 @@
 # raaga-detector
 
-Hindustani raga recognition from audio (research project, non-commercial). See [PLAN.md](PLAN.md) for the plan and current status.
+Hindustani raga recognition from audio (research project, non-commercial). See [PLAN.md](PLAN.md) for the plan and current status, and [CONCEPTS.md](CONCEPTS.md) for what the terms mean and why things are done this way.
 
 ## Run on Colab / Kaggle
 
