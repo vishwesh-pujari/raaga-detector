@@ -1,0 +1,4 @@
+At the real extractor's measured tonic error (3 cents):
+  B1 estimated rec_top1: 0.964 (oracle-tonic frozen result: 0.951)
+  M1 estimated rec_top1: 0.971 (oracle-tonic frozen result: 0.984)
+saved results/phase4a_tonic_robustness.json
