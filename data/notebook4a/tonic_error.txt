@@ -1,0 +1,5 @@
+tonic estimated for 108/108 recordings
+median |tonic error| (cents): 2.9
+tonic within 50 cents: 0.963
+tonic within 100 cents (1 semitone): 0.963
+REAL_TONIC_ERROR_CENTS (used in Part D): 2.9

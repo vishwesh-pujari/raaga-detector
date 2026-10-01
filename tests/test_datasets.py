@@ -85,6 +85,20 @@ def test_saraga_rows_and_vocal_class(tmp_path):
     assert saraga.rows(other)[0]["vocal_class"] == "instrumental"
 
 
+def test_saraga_download_skips_redownload_when_audio_already_fetched(tmp_path, monkeypatch):
+    """Regression test: include_audio=True's extracted set is a superset of include_audio=False's,
+    so a later text-only download() call must not redownload the whole zip just because it checks a
+    different marker name than the earlier audio call wrote."""
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("fetch_members should not be called -- audio download already covers this")
+
+    monkeypatch.setattr("raaga.data.remote.fetch_members", _boom)
+    (tmp_path / "saraga_hindustani").mkdir()
+    (tmp_path / "saraga_hindustani" / ".complete_with_audio").touch()
+    saraga.download(tmp_path, include_audio=False)  # must not raise
+
+
 def test_catalog_merges_and_dedups(tmp_path):
     _make_hmd(tmp_path)
     _make_saraga(tmp_path)

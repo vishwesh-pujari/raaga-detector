@@ -30,14 +30,21 @@ def download(raw_home: Path, include_audio: bool = False) -> None:
     mp3s, since B1/M1 never need Saraga's audio. Set ``True`` for Phase 4a's extractor validation,
     which specifically does need it -- this downloads the full zip either way (Zenodo doesn't
     support partial zip download, see ``remote.py``), just keeps more of it.
+
+    ``include_audio=True``'s extracted set is a strict superset of ``include_audio=False``'s, so if
+    an earlier ``include_audio=True`` call already finished (its own marker, ``.complete_with_audio``,
+    is on disk), a later ``include_audio=False`` call has nothing left to do -- without this check it
+    would redownload and re-extract the whole ~4.1 GB zip just for files already sitting on disk,
+    since ``fetch_members`` only recognises its own marker name.
     """
     from raaga.data.remote import fetch_members
 
+    dest = Path(raw_home) / "saraga_hindustani"
+    if not include_audio and (dest / ".complete_with_audio").exists():
+        return
     wanted = _wanted_with_audio if include_audio else _wanted
     marker = ".complete_with_audio" if include_audio else ".complete"
-    fetch_members(
-        URL, Path(raw_home) / "saraga_hindustani", wanted, md5="ea9ed2885ea37a1b10e42f60cf299702", marker_name=marker
-    )
+    fetch_members(URL, dest, wanted, md5="ea9ed2885ea37a1b10e42f60cf299702", marker_name=marker)
 
 
 def vocal_class(metadata: dict) -> str:

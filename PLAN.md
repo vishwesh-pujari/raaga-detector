@@ -247,7 +247,7 @@ deferred `tonic` vs `tonicFine` or architecture-size ablations, happens only on 
 
 ### Phase 4: Calibration and robustness
 
-#### 4a. Tonic/pitch extraction from raw audio -- code done, notebook run pending
+#### 4a. Tonic/pitch extraction from raw audio -- core result in, one re-run pending
 
 **The problem this solves**: every model so far (B1, M1) was trained and evaluated on *pre-extracted*
 pitch and *dataset-provided* tonic (HMD's/Saraga's own shipped files). Nothing yet takes raw audio
@@ -349,6 +349,46 @@ every recording and skips already-done ones on a re-run, so a disconnect loses o
 in-flight recording. Verified with a simulated mid-run crash (a synthetic loop that fails partway
 through, then resumes) before shipping this, not just written and assumed correct.
 
+**Part A run results (2026-10-01), all 108 Saraga recordings:**
+
+| Metric | Value |
+|---|---|
+| Median \|tonic error\| | **2.9 cents** |
+| Within 50 cents | 96.3% (104/108) |
+| Within 100 cents | 96.3% (104/108) -- identical to the 50c figure |
+
+**At this real error level (3c), both models retain most of their oracle-tonic accuracy**: B1
+0.964 vs. its frozen 0.951, M1 0.971 vs. its frozen 0.984. Answers Phase 4a's core question
+positively -- the real extractor is accurate enough not to meaningfully hurt the app.
+
+**But the error distribution is bimodal, not uniformly small** -- worth knowing, not just the
+median. `within 50c == within 100c` means *zero* recordings landed in the 50-100c range: it's a
+clean split between "works very well" (~96%, IQR of just 2.70-2.97c -- suspiciously tight, see
+below) and "fails badly" (~4%, errors of hundreds of cents, min -707c/max +704c -- essentially a
+wrong note or octave). The median correctly describes the typical case but understates real-world
+risk: reading `REAL_TONIC_ERROR_CENTS` off the sensitivity curve gives accuracy for the 96% case,
+not a blended expectation -- for the ~4% that fail catastrophically, the curve says accuracy
+collapses to near-zero. Makes concrete exactly why Phase 4b's planned "uncertain" fallback matters,
+not just a nice-to-have. **Not yet investigated**: which specific recordings fail and whether
+there's a pattern (instrument, recording quality) -- needs the row-level `extractor_validation.csv`,
+not just the summary stats.
+
+**Secondary curiosity, not on the critical path**: pitch-track agreement (`pitch_median_abs_cents_err`)
+clustered suspiciously tightly around exactly 20 cents (25th/50th/75th percentiles: 19.9999 / 20.0003
+/ 20.0005c) -- too consistent across 108 different real recordings to be genuine per-recording
+disagreement, more likely a systematic alignment or `binResolution=10`-related quantization
+artifact in how the two pitch tracks were compared. Doesn't affect Part D (only tonic error feeds
+the sensitivity lookup). Deferred, not investigated further yet.
+
+**Bug found and fixed (2026-10-01)**: Part B's sweep ran on only 55 of fold 4's 61 recordings --
+`catalog.build_catalog(RAW, include_saraga=True, ...)` needs Saraga's text files on local disk, but
+Part B only called `hmd.download(RAW)`, never `saraga.download(RAW)`. In a session where Part B
+ran separately from Part A (likely, given the multi-hour gap), Saraga's files simply weren't
+present, so `saraga.rows()` silently returned nothing and the inner join dropped all 6 Saraga
+recordings from fold 4. Fixed by adding the missing `saraga.download(RAW)` call. **Re-running the
+sweep with this fix is a pending follow-up** -- unlikely to change the qualitative conclusion
+(excludes a small, likely-similar subpopulation) but should be done for a complete, correct number.
+
 **Test discipline**: unit tests for the offset math and the extraction functions (synthetic
 signals, documenting the drone-vs-no-drone finding as a regression check so it isn't
 re-investigated later); an end-to-end test on synthetic ragas proving the *sweep methodology
@@ -416,4 +456,5 @@ raaga-detector/
 4. ~~Run `notebooks/02_baseline_pitch_histogram.ipynb`~~ -- done. B1 frozen: 95.1% recording-level top-1, 0.936 macro-F1 on the held-out fold.
 5. ~~Build M1 and run it~~ -- done. M1 frozen: 98.4% recording-level top-1, 0.989 macro-F1 on the held-out fold, beating B1 (95.1% / 0.936). See Phase 3.
 6. ~~Decide what's next~~ -- **decided: Phase 4a (tonic/pitch extraction from raw audio)**, since it's the actual blocker between "trained classifier" and "app that accepts audio," and has the fewest unresolved dependencies of the options considered (no new data access, no GPU required, essentia verified working). The other options ((b) M1 ablations, (c) M3/MERT decision, (d) Phase 5 packaging) are still open for later, not abandoned.
-7. ~~Build Phase 4a~~ -- code done: `features/extract.py`, `data/saraga.py` audio support (+ a real marker-scoping bug found and fixed), `eval/tonic_robustness.py`, `notebooks/04_tonic_robustness.ipynb`. 46 tests passing locally. **Next: run `notebooks/04_tonic_robustness.ipynb`** -- no GPU needed, but Part A downloads Saraga's audio for the first time (a big, one-time download) and real-audio pitch/tonic extraction is CPU-compute-heavy (~5 min per ~50min recording observed locally), so the full Saraga catalog may take a while.
+7. ~~Build and run Phase 4a~~ -- done. Core result: real extractor's median tonic error (2.9c) costs B1/M1 very little accuracy (see Phase 4a for the full, honest readout -- including a bimodal error distribution with ~4% catastrophic failures, and a bug found in the sweep's test-set coverage, now fixed).
+8. **Pending: re-run Part B/C's sweep** with the `saraga.download(RAW)` fix (full 61-recording fold 4, not 55) -- quick, doesn't need Part A's ~5h extraction to repeat (`saraga.download()` now short-circuits for the text-only case when Part A's audio download already finished in *any* earlier session, since its completion marker persists on Drive -- fixes a found inefficiency where it would otherwise redownload the whole ~4.1GB zip just for files already on disk). Then decide: investigate the catastrophic-failure outliers (needs `extractor_validation.csv`'s row-level data), or move to Phase 4b (calibration/uncertain-fallback -- now has a concrete reason to prioritize) or another direction.
