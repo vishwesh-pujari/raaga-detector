@@ -213,6 +213,18 @@ tonic available at training time, and then has to cope with whatever tonic an es
 for new audio later. Training *and* testing with the same wrong tonic would measure something
 different (and easier) than what the app actually faces.
 
+**The zero-offset point as a free correctness check.** (2)'s sweep always includes `offset_cents=0`
+(no injected error -- the unperturbed oracle tonic). That point should reproduce the frozen oracle
+B1/M1 numbers almost exactly, since it's nominally the same models evaluated the same way on the
+same tonics. In practice this caught a real bug: an early run of this sweep had `offset_cents=0`
+B1 accuracy (0.964) *exceeding* its own frozen oracle result (0.951) -- estimated tonic "beating"
+the ground truth it was simulating is not a plausible real effect, so the mismatch was a signal
+something was wrong upstream, not noise to shrug off. It traced back to 6 Saraga recordings being
+silently dropped from the test set (a missing `saraga.download()` call -- see Phase 4a in
+`PLAN.md`), which shifted the test population slightly. After the fix, offset=0 matched the frozen
+numbers almost exactly (B1 0.951 vs. 0.951, M1 0.984 vs. 0.984) -- worth checking this invariant
+any time a similar sweep-vs-frozen-baseline setup is built again.
+
 ---
 
 ## Part C: Machine learning methodology

@@ -247,7 +247,7 @@ deferred `tonic` vs `tonicFine` or architecture-size ablations, happens only on 
 
 ### Phase 4: Calibration and robustness
 
-#### 4a. Tonic/pitch extraction from raw audio -- core result in, one re-run pending
+#### 4a. Tonic/pitch extraction from raw audio -- **done**
 
 **The problem this solves**: every model so far (B1, M1) was trained and evaluated on *pre-extracted*
 pitch and *dataset-provided* tonic (HMD's/Saraga's own shipped files). Nothing yet takes raw audio
@@ -357,9 +357,12 @@ through, then resumes) before shipping this, not just written and assumed correc
 | Within 50 cents | 96.3% (104/108) |
 | Within 100 cents | 96.3% (104/108) -- identical to the 50c figure |
 
-**At this real error level (3c), both models retain most of their oracle-tonic accuracy**: B1
-0.964 vs. its frozen 0.951, M1 0.971 vs. its frozen 0.984. Answers Phase 4a's core question
-positively -- the real extractor is accurate enough not to meaningfully hurt the app.
+**At this real error level (2.85c), both models retain almost all of their oracle-tonic accuracy**:
+B1 0.951 vs. its frozen 0.951 (no measurable cost), M1 0.974 vs. its frozen 0.984 (~1pp cost).
+Answers Phase 4a's core question positively -- the real extractor is accurate enough not to
+meaningfully hurt the app. (Numbers corrected 2026-10-01 -- see "Bug found and fixed" and "Re-run
+results" below; the first run's numbers, B1 0.964/M1 0.971, were measured on an incomplete test set
+and are superseded.)
 
 **But the error distribution is bimodal, not uniformly small** -- worth knowing, not just the
 median. `within 50c == within 100c` means *zero* recordings landed in the 50-100c range: it's a
@@ -385,9 +388,38 @@ the sensitivity lookup). Deferred, not investigated further yet.
 Part B only called `hmd.download(RAW)`, never `saraga.download(RAW)`. In a session where Part B
 ran separately from Part A (likely, given the multi-hour gap), Saraga's files simply weren't
 present, so `saraga.rows()` silently returned nothing and the inner join dropped all 6 Saraga
-recordings from fold 4. Fixed by adding the missing `saraga.download(RAW)` call. **Re-running the
-sweep with this fix is a pending follow-up** -- unlikely to change the qualitative conclusion
-(excludes a small, likely-similar subpopulation) but should be done for a complete, correct number.
+recordings from fold 4. Fixed by adding the missing `saraga.download(RAW)` call.
+
+**Second bug found and fixed while re-running (2026-10-01)**: `saraga.download()`'s two variants
+(`include_audio=True`/`False`) use different completion markers (`.complete_with_audio`/`.complete`
+-- itself a deliberate fix from earlier, see `data/remote.py`'s `marker_name`), so a session that
+already ran Part A (`include_audio=True`) would still redownload the whole ~4.1GB zip from scratch
+when Part B called `saraga.download(RAW)` (`include_audio=False`), even though every file it wanted
+was already on disk. Fixed in `saraga.download()`: a text-only call now short-circuits if the
+audio-call's marker is already present, since its extracted set is a strict superset. (Raw
+downloads live on the Colab VM's local disk, `env.raw_data_home()`, not Drive -- so this
+short-circuit only helps within one still-connected session, not across a fresh runtime; see
+`env.py`'s module docstring.) Regression-tested
+(`test_saraga_download_skips_redownload_when_audio_already_fetched`).
+
+**Re-run results (2026-10-01), full 61-recording fold 4 -- `data/notebook4a/phase4a_tonic_robustness.json`:**
+
+| | offset=0 (sanity check vs. frozen) | at real error (2.85c) | frozen oracle |
+|---|---|---|---|
+| B1 rec_top1 | 0.951 | 0.951 | 0.951 |
+| M1 rec_top1 | 0.984 | 0.974 | 0.984 |
+
+n_recordings is now 61 (was 55) and n_chunks 5642 (was 5496) at every offset, confirming the fix
+took effect. **The offset=0 point now matches the frozen oracle numbers almost exactly for both
+models** -- a free internal-consistency check (see `CONCEPTS.md`'s "zero-offset point as a free
+correctness check"). This also **resolves a real anomaly from the first (buggy) run**: B1's
+estimated-tonic accuracy at the real error level had been *higher* than its own oracle-tonic frozen
+result (0.964 vs. 0.951) -- not a plausible effect, since estimated tonic can't be more correct
+than the ground truth it approximates. That gap is gone after the fix (0.951 vs. 0.951 -- exact
+match), confirming it was an artifact of the missing-recordings bug, not a real signal. The
+sensitivity curve's qualitative shape (near-ceiling through ~10-20c, steep collapse 35-75c, floor
+at chance by ~100c) is unchanged. **This is the current, correct result; the numbers above in "At
+this real error level" reflect it.**
 
 **Test discipline**: unit tests for the offset math and the extraction functions (synthetic
 signals, documenting the drone-vs-no-drone finding as a regression check so it isn't
@@ -457,4 +489,5 @@ raaga-detector/
 5. ~~Build M1 and run it~~ -- done. M1 frozen: 98.4% recording-level top-1, 0.989 macro-F1 on the held-out fold, beating B1 (95.1% / 0.936). See Phase 3.
 6. ~~Decide what's next~~ -- **decided: Phase 4a (tonic/pitch extraction from raw audio)**, since it's the actual blocker between "trained classifier" and "app that accepts audio," and has the fewest unresolved dependencies of the options considered (no new data access, no GPU required, essentia verified working). The other options ((b) M1 ablations, (c) M3/MERT decision, (d) Phase 5 packaging) are still open for later, not abandoned.
 7. ~~Build and run Phase 4a~~ -- done. Core result: real extractor's median tonic error (2.9c) costs B1/M1 very little accuracy (see Phase 4a for the full, honest readout -- including a bimodal error distribution with ~4% catastrophic failures, and a bug found in the sweep's test-set coverage, now fixed).
-8. **Pending: re-run Part B/C's sweep** with the `saraga.download(RAW)` fix (full 61-recording fold 4, not 55) -- quick, doesn't need Part A's ~5h extraction to repeat (`saraga.download()` now short-circuits for the text-only case when Part A's audio download already finished in *any* earlier session, since its completion marker persists on Drive -- fixes a found inefficiency where it would otherwise redownload the whole ~4.1GB zip just for files already on disk). Then decide: investigate the catastrophic-failure outliers (needs `extractor_validation.csv`'s row-level data), or move to Phase 4b (calibration/uncertain-fallback -- now has a concrete reason to prioritize) or another direction.
+8. ~~Re-run Part B/C's sweep~~ -- done 2026-10-01, full 61-recording fold 4 (not 55). Also resolved a real anomaly from the first run (B1 estimated-tonic accuracy had exceeded its own oracle result -- see Phase 4a). **Phase 4a is now fully done**, both parts and the exit criteria met. Result files committed under `data/notebook4a/`.
+9. **Open: what's next.** Options, none started: (a) investigate the ~4% catastrophic tonic-failure outliers (needs `extractor_validation.csv`'s row-level data, not yet shared); (b) Phase 4b -- calibration/uncertain-fallback, now has a concrete motivation from the bimodal tonic-error finding; (c) M1 ablations (tonic vs. tonicFine, architecture size) on folds 0-3; (d) the M3/MERT vs. standalone-Saraga-list decision (section 0); (e) Phase 5 packaging. To be decided with the user, not unilaterally -- consistent with how each phase choice has been made so far.
